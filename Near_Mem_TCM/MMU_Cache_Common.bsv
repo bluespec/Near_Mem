@@ -216,6 +216,13 @@ typedef struct {
    } Single_Req
 deriving (Bits, FShow);
 
+// Single Responses
+typedef struct {
+   Bool       ok;
+   Bit #(64)  data;
+   } Read_Data
+deriving (Bits, FShow);
+
 // Write-data is just Bit #(64) data; no need for a new type decl
 
 // ================================================================
