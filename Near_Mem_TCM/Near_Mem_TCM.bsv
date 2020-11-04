@@ -421,14 +421,14 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
          end
 
          // serviced by the TCM
-         else if (soc_map.m_is_tcm_addr (fabric_pc)) begin
+         else if (soc_map.m_is_itcm_addr_1 (fabric_pc)) begin
             rg_result_valid   <= True;
             rg_exc            <= False;
             rg_imem_state     <= MEM_TCM_RSP;
 
             // Initiate RAM read
             Addr word_addr = fv_Fabric_Addr_to_Addr (
-               (fabric_pc - soc_map.m_tcm_addr_base) >> bits_per_byte_in_tcm_word);
+               (fabric_pc - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
             iram.put (0, word_addr, ?);
          end
 
@@ -560,7 +560,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    function ActionValue #(Maybe #(Bit #(64))) fav_write_to_ram (Bit #(64) ram_data);
       actionvalue
          Fabric_Addr fabric_va = fv_Addr_to_Fabric_Addr (rg_req.va);
-         Addr tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_va - soc_map.m_tcm_addr_base);
+         Addr tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_va - soc_map.m_dtcm_addr_base);
          let st_value  = rg_req.st_value;
          let f3        = rg_req.f3;
          Maybe #(Bit #(64)) lrsc_word64 = tagged Invalid;
@@ -794,7 +794,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          end
 
          // TCM reqs
-         else if (soc_map.m_is_tcm_addr (fabric_addr)) begin
+         else if (soc_map.m_is_dtcm_addr (fabric_addr)) begin
             rg_result_valid <= True;
             rg_exc          <= False;
             rg_dmem_state <= MEM_TCM_RSP;
@@ -803,7 +803,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
             // CACHE_ST or AMO store, the actual write happens in
             // the response phase or AMO phase
             Addr word_addr = fv_Fabric_Addr_to_Addr (
-               (fabric_addr - soc_map.m_tcm_addr_base) >> bits_per_byte_in_tcm_word);
+               (fabric_addr - soc_map.m_dtcm_addr_base) >> bits_per_byte_in_tcm_word);
             dtcm.put (0, word_addr, ?);
          end
 

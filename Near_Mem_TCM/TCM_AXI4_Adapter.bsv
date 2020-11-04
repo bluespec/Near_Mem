@@ -569,10 +569,6 @@ module mkTCM_DMA_AXI4_Adapter #(
       endaction
    endfunction
 
-   function Bool fn_is_tcm_addr (Fabric_Addr addr);
-      return ((soc_map.m_tcm_addr_base <= addr) && (addr < soc_map.m_tcm_addr_lim));
-   endfunction
-
    // ----------------------------------------------------------------
    // Handle fabric read request
    // Only full-word requests (32b in Fabric_32 and 64b in Fabric_64)
@@ -580,9 +576,9 @@ module mkTCM_DMA_AXI4_Adapter #(
    // The head of the read request queue, and some functions on it
    let rda              = slave_xactor.o_rd_addr.first;
    let rd_byte_addr     = rda.araddr;
-   let rd_ram_word_addr = ((rd_byte_addr - soc_map.m_tcm_addr_base) >> bits_per_byte_in_tcm_word);
+   let rd_ram_word_addr = ((rd_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
 
-   Bool rd_addr_valid   = fn_is_tcm_addr (rd_byte_addr);
+   Bool rd_addr_valid   = soc_map.m_is_itcm_addr_1 (rd_byte_addr);
 
    Byte_in_TCM_Word rd_byte_in_tcm_word = rd_byte_addr [(bits_per_byte_in_tcm_word - 1) : 0];
 
@@ -658,9 +654,9 @@ module mkTCM_DMA_AXI4_Adapter #(
    let wrd = slave_xactor.o_wr_data.first;
 
    let wr_byte_addr     = wra.awaddr;
-   let wr_ram_word_addr = ((wr_byte_addr - soc_map.m_tcm_addr_base) >> bits_per_byte_in_tcm_word);
+   let wr_ram_word_addr = ((wr_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
 
-   Bool wr_addr_valid   = fn_is_tcm_addr (wr_byte_addr);
+   Bool wr_addr_valid   = soc_map.m_is_itcm_addr_2 (wr_byte_addr);
 
    Byte_in_TCM_Word wr_byte_in_tcm_word = wr_byte_addr [(bits_per_byte_in_tcm_word - 1) : 0];
 
