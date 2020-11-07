@@ -296,7 +296,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    Reg #(Bool)      rg_result_valid <- mkReg (False);
    Reg #(Addr)      rg_pc           <- mkRegU;
    Reg #(WordXL)    rg_instr        <- mkRegU;
-   Reg #(Bool)      rg_exc          <- mkRegU;
+   Reg #(Bool)      rg_exc          <- mkReg (False);
    Reg #(Exc_Code)  rg_exc_code     <- mkRegU;
 
    // Current request from the CPU
@@ -358,7 +358,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       dw_instr       <= instr;
 
       // Back to idle for the next request
-      rg_imem_state  <= MEM_IDLE;
+      // rg_imem_state  <= MEM_IDLE;
    endrule
 
    // Drive response from MMIO
@@ -368,7 +368,58 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       dw_instr          <= ld_val;
       dw_exc            <= err;
       dw_exc_code       <= exc_code_INSTR_ACCESS_FAULT;
-      rg_imem_state     <= MEM_IDLE;
+      // rg_imem_state     <= MEM_IDLE;
+   endrule
+
+   // This rule is basically the body of method ma_req; decoupling
+   // through a wire affords scheduling flexibility.
+   //
+   // Registers an incoming request and starts the TCM/MMIO probe 
+   Wire #(IMem_Req) w_imem_req <- mkWire;
+   (* fire_when_enabled *)
+   rule rl_req;
+      let imem_req = w_imem_req;
+      let pc = imem_req.pc;
+      let f3 = imem_req.f3;
+
+      // Note: ignoring all VM args in this version of Near_Mem_TCM
+      if (verbosity > 1)
+         $display ("%0d: %m.rl_req: pc 0x%08h", cur_cycle, pc);
+
+      // Assert: rg_imem_state == MEM_IDLE
+      rg_imem_req     <= imem_req;
+
+      // for all the checks relating to the soc-map
+      Fabric_Addr fabric_pc = fv_Addr_to_Fabric_Addr (pc);
+
+      // address checks
+      // mis-alignment
+      if (!fn_is_aligned (f3[1:0], pc)) begin
+         rg_result_valid   <= True;
+         rg_exc            <= True;
+         rg_imem_state     <= MEM_TCM_RSP;
+         rg_exc_code       <= exc_code_INSTR_ADDR_MISALIGNED;
+      end
+
+      // serviced by the TCM
+      else if (soc_map.m_is_itcm_addr_1 (fabric_pc)) begin
+         rg_result_valid   <= True;
+         rg_exc            <= False;
+         rg_imem_state     <= MEM_TCM_RSP;
+
+         // Initiate RAM read
+         Addr word_addr = fv_Fabric_Addr_to_Addr (
+            (fabric_pc - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
+         iram.put (0, word_addr, ?);
+      end
+
+      // outside TCM address space -- send to MMIO
+      else begin
+         rg_result_valid   <= False;
+         rg_exc            <= False;
+         rg_imem_state     <= MEM_MMIO_RSP;
+         mmio.start;
+      end
    endrule
 
    // ----------------
@@ -400,46 +451,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 `endif
          );    // { VM_Mode, ASID, PPN_for_page_table }
 
-         // Note: ignoring all VM args in this version of Near_Mem_TCM
-         if (verbosity > 1)
-            $display ("%0d: %m.req: pc 0x%08h", cur_cycle, pc);
-
-         // Assert: rg_imem_state == MEM_IDLE
-
-         rg_imem_req     <= IMem_Req {pc: pc, f3: f3};
-
-         // for all the checks relating to the soc-map
-         Fabric_Addr fabric_pc = fv_Addr_to_Fabric_Addr (pc);
-
-         // address checks
-         // mis-alignment
-         if (!fn_is_aligned (f3[1:0], pc)) begin
-            rg_result_valid   <= True;
-            rg_exc            <= True;
-            rg_imem_state     <= MEM_TCM_RSP;
-            rg_exc_code       <= exc_code_INSTR_ADDR_MISALIGNED;
-         end
-
-         // serviced by the TCM
-         else if (soc_map.m_is_itcm_addr_1 (fabric_pc)) begin
-            rg_result_valid   <= True;
-            rg_exc            <= False;
-            rg_imem_state     <= MEM_TCM_RSP;
-
-            // Initiate RAM read
-            Addr word_addr = fv_Fabric_Addr_to_Addr (
-               (fabric_pc - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
-            iram.put (0, word_addr, ?);
-         end
-
-         // outside TCM address space -- send to MMIO
-         else begin
-            rg_result_valid   <= False;
-            rg_exc            <= False;
-            rg_imem_state     <= MEM_MMIO_RSP;
-            mmio.start;
-         end
-
+         w_imem_req <= IMem_Req {pc: pc, f3: f3};
       endmethod
 
       method Bool valid = dw_valid;
@@ -486,7 +498,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // Module state
    Reg #(Mem_State)           rg_dmem_state     <- mkReg (MEM_IDLE);
    Reg #(Bool)                rg_result_valid   <- mkReg (False);
-   Reg #(Bool)                rg_exc            <- mkRegU;
+   Reg #(Bool)                rg_exc            <- mkReg (False);
    Reg #(Exc_Code)            rg_exc_code       <- mkRegU;
 
    SoC_Map_IFC soc_map <- mkSoC_Map;
@@ -498,6 +510,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    Reg #(Bool)                rg_lrsc_valid     <- mkReg (False);
    Reg #(PA)                  rg_lrsc_pa        <- mkRegU; // PA for an active LR
    Reg #(MemReqSize)          rg_lrsc_size      <- mkRegU;
+   Reg #(Bool)                rg_do_store       <- mkReg (False);
 `endif
 
    // Current request from the CPU
@@ -530,12 +543,17 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    TCM_AXI4_Adapter_IFC axi4_adapter<- mkTCM_AXI4_Adapter (
       verbosity_axi4, f_mem_req, f_mem_wdata, f_mem_rdata);
 
-   // The TCM RAM - single-ported
+   // The TCM RAM - dual-ported due to simultaneous loads and stores when
+   // integrated with pipelined processors. When integrated with cores like
+   // Magritte, this is strictly not possible. However, the rules rl_tcm_rsp and
+   // rl_req have not been written to be mutually exclusive. For a non-pipelined
+   // processor, it is possible to work with a single-ported BRAM while sacrificing
+   // concurrency between the response and request phases.
 `ifdef SYNTHESIS
-   BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore1BE (
+   BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BE (
       n_words_BRAM, config_output_register_BRAM);
 `else
-   BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore1BELoad (
+   BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (
       n_words_BRAM, config_output_register_BRAM, "dtcm.hex", load_file_is_binary_BRAM);
 `endif
 
@@ -543,6 +561,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    mkConnection (mmio.g_mem_req,       axi4_adapter.p_mem_single_req);
    mkConnection (mmio.g_write_data,    axi4_adapter.p_mem_single_write_data);
    mkConnection (mmio.p_mem_read_data, axi4_adapter.g_mem_single_read_data);
+
+   let dtcm_rd_port = dtcm.a;
+   let dtcm_wr_port = dtcm.b;
 
    // ----------------------------------------------------------------
    // For debugging/tracing: format the CPU request
@@ -636,7 +657,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          // the actual write to the RAM - the only case when we
          // don't write is if there was a SC fail
          if (! sc_fail) begin
-            dtcm.put (byte_en, tcm_word_addr, ram_st_value);
+            dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
             dw_final_st_val <= extend (ram_st_value);
          end
 
@@ -668,15 +689,19 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    rule rl_tcm_rsp (rg_dmem_state == MEM_TCM_RSP);
       // For CACHE_LD and LR, simply forward the RAM output
       let ram_out  = fn_extract_and_extend_bytes (
-         rg_req.f3, rg_req.va, pack (dtcm.read));
+         rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
 
       Maybe #(Bit #(64)) lrsc_word64 = tagged Invalid;
       // If the request involves a store, initiate the write
       // In the case of RMWs, it will involve the current RAM output as well.
-      if (  (rg_req.op == CACHE_ST)
-         || fv_is_AMO_SC (rg_req)
-         || fv_is_AMO_RMW (rg_req)) begin
+      if (  rg_do_store
+         && (   (rg_req.op == CACHE_ST)
+             || fv_is_AMO_SC (rg_req)
+             || fv_is_AMO_RMW (rg_req)
+            )
+         ) begin
          lrsc_word64 <- fav_write_to_ram (ram_out);
+         rg_do_store <= False;
       end
 
       // drive the outputs
@@ -692,7 +717,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
       dw_word64 <= word64;
 
-      rg_dmem_state  <= MEM_IDLE;
+      // rg_dmem_state  <= MEM_IDLE;
 
 `ifdef ISA_A
       // For LR ops, update reservation regs
@@ -717,11 +742,83 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       dw_final_st_val   <= final_st_val;
       dw_exc            <= err;
       dw_exc_code       <= fv_exc_code_access_fault (rg_req);
-      rg_dmem_state     <= MEM_IDLE;
+      // rg_dmem_state     <= MEM_IDLE;
 
       if (verbosity >= 1)
          $display ("%0d: %m.rl_mmio_rsp: (word64 %016h) (final_st_val %016h)"
             , cur_cycle, ld_val, final_st_val);
+   endrule
+
+   // This rule is basically the body of method ma_req; decoupling
+   // through a wire affords scheduling flexibility.
+   //
+   // Registers an incoming request and starts the TCM/MMIO probe 
+   Wire #(MMU_Cache_Req) w_dmem_req <- mkWire;
+   (* fire_when_enabled *)
+   rule rl_req;
+      let dmem_req = w_dmem_req;
+      let op = dmem_req.op;
+      let f3 = dmem_req.f3;
+      let addr = dmem_req.va;
+      let st_value = dmem_req.st_value;
+`ifdef ISA_A
+      let amo_funct7 = dmem_req.amo_funct7;
+`endif
+
+      // Note: ignoring all VM args for this version of Near_Mem_TCM
+      if (verbosity > 1)
+         $display ("%0d: %m.rl_req: ", cur_cycle, show_CPU_req (op, f3, addr, st_value));
+
+      // Assert: rg_dmem_state == MEM_IDLE
+
+      // register the request for the response stage
+      rg_req <= dmem_req;
+
+      // for all the checks relating to the soc-map
+      Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (addr);
+
+      // Check if f3 is legal, and if f3 and addr are compatible
+      if (! fn_is_aligned (f3 [1:0], addr)) begin
+         // Misaligned accesses not supported
+         rg_result_valid   <= True;
+         rg_exc            <= True;
+         rg_dmem_state     <= MEM_TCM_RSP;
+         rg_exc_code       <= fv_exc_code_misaligned (MMU_Cache_Req {
+            op        : op
+          , f3        : f3
+          , va        : addr
+          , st_value  : st_value
+`ifdef ISA_A
+          , amo_funct7: amo_funct7
+`endif
+         });
+      end
+
+      // TCM reqs
+      else if (soc_map.m_is_dtcm_addr (fabric_addr)) begin
+         rg_result_valid <= True;
+         rg_exc          <= False;
+
+         // A power-saving mechanism to avoid repeated writes to the BRAM
+         rg_do_store     <= True;
+
+         rg_dmem_state <= MEM_TCM_RSP;
+
+         // The read to the RAM is initiated here. If it is a
+         // CACHE_ST or AMO store, the actual write happens in
+         // the response phase or AMO phase
+         Addr word_addr = fv_Fabric_Addr_to_Addr (
+            (fabric_addr - soc_map.m_dtcm_addr_base) >> bits_per_byte_in_tcm_word);
+         dtcm_rd_port.put (0, word_addr, ?);
+      end
+
+      // non-TCM request (outside TCM addr range: could be memory or I/O on the fabric )
+      else begin
+         rg_result_valid   <= False;
+         rg_exc            <= False;
+         rg_dmem_state     <= MEM_MMIO_RSP;
+         mmio.start;
+      end
    endrule
 
    // ----------------------------------------------------------------
@@ -754,66 +851,17 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          , Bit #(1)   mstatus_MXR
          , WordXL     satp
 `endif
-         ) if (rg_dmem_state == MEM_IDLE);
-
-         // Note: ignoring all VM args for this version of Near_Mem_TCM
-         if (verbosity > 1)
-            $display ("%0d: %m.req: ", cur_cycle, show_CPU_req (op, f3, addr, st_value));
-
-         // Assert: rg_dmem_state == MEM_IDLE
-
-         // register the request for the response stage
-         rg_req <= MMU_Cache_Req {
-              op        : op
-            , f3        : f3
-            , va        : addr
-            , st_value  : st_value
+         );
+         w_dmem_req <= MMU_Cache_Req {
+           op        : op
+         , f3        : f3
+         , va        : addr
+         , st_value  : st_value
 `ifdef ISA_A
-            , amo_funct7: amo_funct7
+         , amo_funct7: amo_funct7
 `endif
          };
 
-         // for all the checks relating to the soc-map
-         Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (addr);
-
-         // Check if f3 is legal, and if f3 and addr are compatible
-         if (! fn_is_aligned (f3 [1:0], addr)) begin
-            // Misaligned accesses not supported
-            rg_result_valid   <= True;
-            rg_exc            <= True;
-            rg_dmem_state     <= MEM_TCM_RSP;
-            rg_exc_code       <= fv_exc_code_misaligned (MMU_Cache_Req {
-               op        : op
-             , f3        : f3
-             , va        : addr
-             , st_value  : st_value
-`ifdef ISA_A
-             , amo_funct7: amo_funct7
-`endif
-            });
-         end
-
-         // TCM reqs
-         else if (soc_map.m_is_dtcm_addr (fabric_addr)) begin
-            rg_result_valid <= True;
-            rg_exc          <= False;
-            rg_dmem_state <= MEM_TCM_RSP;
-
-            // The read to the RAM is initiated here. If it is a
-            // CACHE_ST or AMO store, the actual write happens in
-            // the response phase or AMO phase
-            Addr word_addr = fv_Fabric_Addr_to_Addr (
-               (fabric_addr - soc_map.m_dtcm_addr_base) >> bits_per_byte_in_tcm_word);
-            dtcm.put (0, word_addr, ?);
-         end
-
-         // non-TCM request (outside TCM addr range: could be memory or I/O on the fabric )
-         else begin
-            rg_result_valid   <= False;
-            rg_exc            <= False;
-            rg_dmem_state     <= MEM_MMIO_RSP;
-            mmio.start;
-         end
       endmethod
 
       method Bool       valid       = dw_valid;

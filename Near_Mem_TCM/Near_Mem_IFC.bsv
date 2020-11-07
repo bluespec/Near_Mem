@@ -199,7 +199,7 @@ endinterface
 
 interface DMem_IFC;
    // CPU side: DMem request
-   // (* always_ready *)
+   (* always_ready *)
    method Action  req (  CacheOp op
                        , Bit #(3) f3
 `ifdef ISA_A
