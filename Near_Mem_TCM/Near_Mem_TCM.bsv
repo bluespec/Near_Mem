@@ -581,15 +581,14 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // ----------------------------------------------------------------
    // BEHAVIOR
    // This function writes to the TCM RAM
-   function Action fa_write_to_ram (Addr tcm_byte_addr, Bit #(64) st_value);
+   function Action fa_write_to_ram (Addr tcm_byte_addr, MMU_Cache_Req req, Bit #(64) st_value);
       action
-      let f3 = rg_req.f3;
-
-      match {.byte_en, .ram_st_value} = fn_byte_adjust_write (f3, tcm_byte_addr, st_value);
+      match {.byte_en, .ram_st_value} = fn_byte_adjust_write (req.f3, tcm_byte_addr, st_value);
       Addr tcm_word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
 
       if (verbosity >= 1)
-         $display ("      (RAM byte_en %08b) (RAM data %016h)", byte_en, ram_st_value);
+         $display ("      (RAM byte_en %08b) (RAM addr %08h) (RAM data %016h)"
+            , byte_en, tcm_word_addr, ram_st_value);
 
       dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
 
@@ -601,15 +600,15 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       // "tohost" addr on which to monitor writes, for standard ISA tests.
       // See NOTE: "tohost" above.
       if (  (rg_watch_tohost)
-         && (rg_req.op == CACHE_ST)
-         && (zeroExtend (rg_req.va) == rg_tohost_addr)
+         && (req.op == CACHE_ST)
+         && (zeroExtend (req.va) == rg_tohost_addr)
          && (ram_st_value != 0)) begin
          rg_tohost_value <= ram_st_value;
          let test_num = (ram_st_value >> 1);
          $display ("%0d: %m.fa_watch_tohost", cur_cycle);
          if (test_num == 0) $write ("    PASS");
          else               $write ("    FAIL <test_%0d>", test_num);
-         $display ("  (<tohost>  addr %08h  data %08h)", rg_req.va, ram_st_value);
+         $display ("  (<tohost>  addr %08h  data %08h)", req.va, ram_st_value);
       end
 `endif
       endaction
@@ -680,7 +679,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
             $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
          end
 
-         if (! sc_fail) fa_write_to_ram (tcm_byte_addr, st_value);
+         if (! sc_fail) fa_write_to_ram (tcm_byte_addr, rg_req, st_value);
 
          return (lrsc_word64);
       endactionvalue
@@ -715,7 +714,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // --------
    // Drive response from TCM -- loads, LR, exceptions
    rule rl_tcm_rsp (rg_dmem_state == MEM_TCM_RSP);
-
       // drive the outputs
       dw_valid       <= rg_result_valid;
       dw_exc         <= rg_exc;
@@ -734,8 +732,11 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       dw_word64 <= word64;
 
       if (verbosity >= 1)
-         $display ("%0d: %m.rl_tcm_rsp: (va %08h) (word64 %016h)"
-            , cur_cycle, rg_req.va, word64);
+         $display ("%0d: %m.rl_tcm_rsp: (va %08h) (word64 %016h)", cur_cycle, rg_req.va, word64);
+
+      if (verbosity >= 2)
+         $display ("     (ram_out %016h) (rg_req ", ram_out, fshow (rg_req), " )");
+
    endrule
 
 
@@ -753,7 +754,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
       if (verbosity >= 1)
          $display ("%0d: %m.rl_mmio_rsp: (word64 %016h) (final_st_val %016h)"
-            , cur_cycle, ld_val, final_st_val);
+            ,cur_cycle, ld_val, final_st_val);
    endrule
 
    // This rule is basically the body of method ma_req; decoupling
@@ -807,7 +808,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          // The read/write to the RAM is initiated here. If it is a
          // AMO store, the actual write happens in the AMO phase
          if (op == CACHE_ST) begin
-            fa_write_to_ram (tcm_byte_addr, st_value);
+            fa_write_to_ram (tcm_byte_addr, dmem_req, st_value);
 `ifdef ISA_A
             // Cancel LR/SC reservation if this store is for the reserved addr
             // TODO : should we cancel it on ANY store?
@@ -818,6 +819,8 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          else begin
             let word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
             dtcm_rd_port.put (0, word_addr, ?);
+            if (verbosity >= 2)
+               $display ("   dtcm_rd_port.put (word_addr %08h)", word_addr);
          end
 
          // The next state depends on the op. If it is a LD/ST/LR move to the response state
