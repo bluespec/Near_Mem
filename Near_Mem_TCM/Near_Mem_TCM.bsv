@@ -273,6 +273,9 @@ typedef enum {
      MEM_IDLE                       // Reset done, ready for request
    , MEM_TCM_RSP                    // Response from TCM
    , MEM_MMIO_RSP                   // Response from MMIO
+`ifdef ISA_A
+   , MEM_AMO_RSP                    // Response from TCM for AMO ops
+`endif
 } Mem_State deriving (Bits, Eq, FShow);
 
 function Instr fv_extract_instr (Addr pc, TCM_Word ram_out);
@@ -510,7 +513,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    Reg #(Bool)                rg_lrsc_valid     <- mkReg (False);
    Reg #(PA)                  rg_lrsc_pa        <- mkRegU; // PA for an active LR
    Reg #(MemReqSize)          rg_lrsc_size      <- mkRegU;
-   Reg #(Bool)                rg_do_store       <- mkReg (False);
+   Reg #(Maybe #(Bit #(1)))   rg_lrsc_word64    <- mkReg (tagged Invalid);
 `endif
 
    // Current request from the CPU
@@ -565,6 +568,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    let dtcm_rd_port = dtcm.a;
    let dtcm_wr_port = dtcm.b;
 
+   // Continuous DTCM output
+   let ram_out  = fn_extract_and_extend_bytes (rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
+
    // ----------------------------------------------------------------
    // For debugging/tracing: format the CPU request
 
@@ -574,20 +580,57 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
    // ----------------------------------------------------------------
    // BEHAVIOR
+   // This function writes to the TCM RAM
+   function Action fa_write_to_ram (Addr tcm_byte_addr, Bit #(64) st_value);
+      action
+      let f3 = rg_req.f3;
+
+      match {.byte_en, .ram_st_value} = fn_byte_adjust_write (f3, tcm_byte_addr, st_value);
+      Addr tcm_word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
+
+      if (verbosity >= 1)
+         $display ("      (RAM byte_en %08b) (RAM data %016h)", byte_en, ram_st_value);
+
+      dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
+
+      // XXX is this even used by the CPU?
+      // dw_final_st_val <= extend (ram_st_value);
+
+`ifdef WATCH_TOHOST
+      // ----------------
+      // "tohost" addr on which to monitor writes, for standard ISA tests.
+      // See NOTE: "tohost" above.
+      if (  (rg_watch_tohost)
+         && (rg_req.op == CACHE_ST)
+         && (zeroExtend (rg_req.va) == rg_tohost_addr)
+         && (ram_st_value != 0)) begin
+         rg_tohost_value <= ram_st_value;
+         let test_num = (ram_st_value >> 1);
+         $display ("%0d: %m.fa_watch_tohost", cur_cycle);
+         if (test_num == 0) $write ("    PASS");
+         else               $write ("    FAIL <test_%0d>", test_num);
+         $display ("  (<tohost>  addr %08h  data %08h)", rg_req.va, ram_st_value);
+      end
+`endif
+      endaction
+   endfunction
+   
+
+   // --------
+`ifdef ISA_A
    // This function generates the store word for the TCM depending
    // on the opcode. For AMO ops might involve some computation
    // with read data from the RAM. In case of SC fail, it returns
    // a valid value for the word64 method
-   function ActionValue #(Maybe #(Bit #(64))) fav_write_to_ram (Bit #(64) ram_data);
+   function ActionValue #(Maybe #(Bit #(1))) fav_amo_write_to_ram (Bit #(64) ram_data);
       actionvalue
          Fabric_Addr fabric_va = fv_Addr_to_Fabric_Addr (rg_req.va);
          Addr tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_va - soc_map.m_dtcm_addr_base);
          let st_value  = rg_req.st_value;
          let f3        = rg_req.f3;
-         Maybe #(Bit #(64)) lrsc_word64 = tagged Invalid;
+         Maybe #(Bit #(1)) lrsc_word64 = tagged Invalid;
          Bool sc_fail = False;
 
-`ifdef ISA_A
          // AMO SC request
          if (fv_is_AMO_SC (rg_req)) begin
             if (rg_lrsc_valid && (rg_lrsc_pa == rg_req.va)) begin
@@ -597,14 +640,14 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
                end
                // SC success: cancel LR/SC reservation
                rg_lrsc_valid <= False;
-               lrsc_word64 = tagged Valid 64'h0;
+               lrsc_word64 = tagged Valid 1'h0;
             end
             else begin 
                if (verbosity >= 1) begin
                   $display ("%0d: %m.fav_write_to_ram: SC fail", cur_cycle);
                   $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
                end
-               lrsc_word64 = tagged Valid 64'h1;
+               lrsc_word64 = tagged Valid 1'h1;
                sc_fail = True;
             end
          end
@@ -632,94 +675,32 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
             if (rg_lrsc_pa == rg_req.va) rg_lrsc_valid <= False;
          end
 
-         // CPU store request
-         else if (rg_req.op == CACHE_ST) begin
-`endif
-            if (verbosity >= 1) begin
-               $display ("%0d: %m.fav_write_to_ram: ST", cur_cycle);
-               $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
-            end
-
-`ifdef ISA_A
-            // Cancel LR/SC reservation if this store is for this addr
-            // TODO : should we cancel it on ANY store?
-            if (rg_lrsc_pa == rg_req.va) rg_lrsc_valid <= False;
-         end
-`endif
-
-         // arrange the store bits in the appropriate byte lanes
-         match {.byte_en, .ram_st_value} = fn_byte_adjust_write (f3, tcm_byte_addr, st_value);
-         Addr tcm_word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
-
-         if (verbosity >= 1)
-            $display ("      (RAM byte_en %08b) (RAM data %016h)", byte_en, ram_st_value);
-
-         // the actual write to the RAM - the only case when we
-         // don't write is if there was a SC fail
-         if (! sc_fail) begin
-            dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
-            dw_final_st_val <= extend (ram_st_value);
+         if (verbosity >= 1) begin
+            $display ("%0d: %m.fav_write_to_ram: ST", cur_cycle);
+            $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
          end
 
-         else dw_final_st_val <= 0;
+         if (! sc_fail) fa_write_to_ram (tcm_byte_addr, st_value);
 
-`ifdef WATCH_TOHOST
-         // ----------------
-         // "tohost" addr on which to monitor writes, for standard ISA tests.
-         // See NOTE: "tohost" above.
-         if (  (rg_watch_tohost)
-            && (rg_req.op == CACHE_ST)
-            && (zeroExtend (rg_req.va) == rg_tohost_addr)
-            && (ram_st_value != 0)) begin
-            rg_tohost_value <= ram_st_value;
-            if (verbosity >= 1) begin
-               let test_num = (ram_st_value >> 1);
-               $display ("%0d: %m.fa_watch_tohost", cur_cycle);
-               if (test_num == 0) $write ("    PASS");
-               else               $write ("    FAIL <test_%0d>", test_num);
-               $display ("  (<tohost>  addr %08h  data %08h)", rg_req.va, ram_st_value);
-            end
-         end
-`endif
          return (lrsc_word64);
       endactionvalue
    endfunction 
-   
-   // Drive response from TCM -- loads, LR, exceptions
-   rule rl_tcm_rsp (rg_dmem_state == MEM_TCM_RSP);
-      // For CACHE_LD and LR, simply forward the RAM output
-      let ram_out  = fn_extract_and_extend_bytes (
-         rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
 
-      Maybe #(Bit #(64)) lrsc_word64 = tagged Invalid;
-      // If the request involves a store, initiate the write
-      // In the case of RMWs, it will involve the current RAM output as well.
-      if (  rg_do_store
-         && (   (rg_req.op == CACHE_ST)
-             || fv_is_AMO_SC (rg_req)
-             || fv_is_AMO_RMW (rg_req)
-            )
-         ) begin
-         lrsc_word64 <- fav_write_to_ram (ram_out);
-         rg_do_store <= False;
+
+   // --------
+   // Process AMO ops
+   rule rl_amo_rsp (rg_dmem_state == MEM_AMO_RSP);
+      Maybe #(Bit #(1)) lrsc_word64 = tagged Invalid;
+
+      // If the request involves a store, initiate the write In the case of RMWs, it will
+      // involve the current RAM output as well.
+      if (fv_is_AMO_SC (rg_req) || fv_is_AMO_RMW (rg_req)) begin
+         lrsc_word64 <- fav_amo_write_to_ram (ram_out);
       end
 
-      // drive the outputs
-      dw_valid       <= rg_result_valid;
-      dw_exc         <= rg_exc;
-      dw_exc_code    <= rg_exc_code;
+      // For SC stores, the status (success (0), fail (1)) needs to be returned
+      rg_lrsc_word64 <= lrsc_word64;
 
-      // For SC stores, the status (success (0), fail (1)) needs
-      // to be returned
-      Bit #(64) word64 = ?;
-      if (isValid (lrsc_word64)) word64 = lrsc_word64.Valid;
-      else                       word64 = ram_out;
-
-      dw_word64 <= word64;
-
-      // rg_dmem_state  <= MEM_IDLE;
-
-`ifdef ISA_A
       // For LR ops, update reservation regs
       if (fv_is_AMO_LR (rg_req)) begin
          if (verbosity >= 1) $display ("%0d: %m.rl_tcm_rsp: LR-hit", cur_cycle);
@@ -727,19 +708,45 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          rg_lrsc_pa    <= rg_req.va;
          rg_lrsc_size  <= rg_req.f3 [1:0];
       end
+   endrule
 `endif
+
+
+   // --------
+   // Drive response from TCM -- loads, LR, exceptions
+   rule rl_tcm_rsp (rg_dmem_state == MEM_TCM_RSP);
+
+      // drive the outputs
+      dw_valid       <= rg_result_valid;
+      dw_exc         <= rg_exc;
+      dw_exc_code    <= rg_exc_code;
+
+      Bit #(64) word64 = ?;
+`ifdef ISA_A
+      if (isValid (rg_lrsc_word64))
+         // For SC stores, the status (success (0), fail (1)) needs to be returned
+         word64 = extend (rg_lrsc_word64.Valid);
+      else
+`endif
+         // For CACHE_LD and LR, simply forward the RAM output
+         word64 = ram_out;
+
+      dw_word64 <= word64;
 
       if (verbosity >= 1)
          $display ("%0d: %m.rl_tcm_rsp: (va %08h) (word64 %016h)"
             , cur_cycle, rg_req.va, word64);
    endrule
 
+
+   // --------
    // Drive response from MMIO
    rule rl_mmio_rsp (rg_dmem_state == MEM_MMIO_RSP);
       match { .err, .ld_val, .final_st_val } = mmio.result;
       dw_valid          <= True;
       dw_word64         <= ld_val;
-      dw_final_st_val   <= final_st_val;
+      // XXX is this even used by the CPU?
+      // dw_final_st_val   <= final_st_val;
       dw_exc            <= err;
       dw_exc_code       <= fv_exc_code_access_fault (rg_req);
       // rg_dmem_state     <= MEM_IDLE;
@@ -753,9 +760,14 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // through a wire affords scheduling flexibility.
    //
    // Registers an incoming request and starts the TCM/MMIO probe 
+   // The only situation when the rl_req cannot fire is when the DMEM is in the AMO write phase
    Wire #(MMU_Cache_Req) w_dmem_req <- mkWire;
    (* fire_when_enabled *)
+`ifdef ISA_A
+   rule rl_req (rg_dmem_state != MEM_AMO_RSP);
+`else
    rule rl_req;
+`endif
       let dmem_req = w_dmem_req;
       let op = dmem_req.op;
       let f3 = dmem_req.f3;
@@ -776,6 +788,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
       // for all the checks relating to the soc-map
       Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (addr);
+      let tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_addr - soc_map.m_dtcm_addr_base);
 
       // Check if f3 is legal, and if f3 and addr are compatible
       if (! fn_is_aligned (f3 [1:0], addr)) begin
@@ -783,15 +796,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          rg_result_valid   <= True;
          rg_exc            <= True;
          rg_dmem_state     <= MEM_TCM_RSP;
-         rg_exc_code       <= fv_exc_code_misaligned (MMU_Cache_Req {
-            op        : op
-          , f3        : f3
-          , va        : addr
-          , st_value  : st_value
-`ifdef ISA_A
-          , amo_funct7: amo_funct7
-`endif
-         });
+         rg_exc_code       <= fv_exc_code_misaligned (dmem_req);
       end
 
       // TCM reqs
@@ -799,17 +804,38 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          rg_result_valid <= True;
          rg_exc          <= False;
 
-         // A power-saving mechanism to avoid repeated writes to the BRAM
-         rg_do_store     <= True;
+         // The read/write to the RAM is initiated here. If it is a
+         // AMO store, the actual write happens in the AMO phase
+         if (op == CACHE_ST) begin
+            fa_write_to_ram (tcm_byte_addr, st_value);
+`ifdef ISA_A
+            // Cancel LR/SC reservation if this store is for the reserved addr
+            // TODO : should we cancel it on ANY store?
+            if (rg_lrsc_pa == addr) rg_lrsc_valid <= False;
+`endif
+         end
 
-         rg_dmem_state <= MEM_TCM_RSP;
+         else begin
+            let word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
+            dtcm_rd_port.put (0, word_addr, ?);
+         end
 
-         // The read to the RAM is initiated here. If it is a
-         // CACHE_ST or AMO store, the actual write happens in
-         // the response phase or AMO phase
-         Addr word_addr = fv_Fabric_Addr_to_Addr (
-            (fabric_addr - soc_map.m_dtcm_addr_base) >> bits_per_byte_in_tcm_word);
-         dtcm_rd_port.put (0, word_addr, ?);
+         // The next state depends on the op. If it is a LD/ST/LR move to the response state
+         // which allows the module to process the next request. If it is a RMW AMO op, move to
+         // the AMO state, effectively introducing a one-cycle bubble.
+`ifdef ISA_A
+         if (fv_is_AMO_SC (rg_req) || fv_is_AMO_RMW (rg_req))
+            rg_dmem_state <= MEM_AMO_RSP;
+         else begin
+            // Clear the lrsc_word64
+            rg_lrsc_word64 <= tagged Invalid;
+
+`endif
+            rg_dmem_state <= MEM_TCM_RSP;
+`ifdef ISA_A
+         end
+`endif
+
       end
 
       // non-TCM request (outside TCM addr range: could be memory or I/O on the fabric )
