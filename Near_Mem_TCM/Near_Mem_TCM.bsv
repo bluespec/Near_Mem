@@ -634,7 +634,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          if (fv_is_AMO_SC (rg_req)) begin
             if (rg_lrsc_valid && (rg_lrsc_pa == rg_req.va)) begin
                if (verbosity >= 1) begin
-                  $display ("%0d: %m.fav_write_to_ram: SC success", cur_cycle);
+                  $display ("%0d: %m.fav_amo_write_to_ram: SC success", cur_cycle);
                   $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
                end
                // SC success: cancel LR/SC reservation
@@ -643,7 +643,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
             end
             else begin 
                if (verbosity >= 1) begin
-                  $display ("%0d: %m.fav_write_to_ram: SC fail", cur_cycle);
+                  $display ("%0d: %m.fav_amo_write_to_ram: SC fail", cur_cycle);
                   $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
                end
                lrsc_word64 = tagged Valid 1'h1;
@@ -655,7 +655,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          else if (fv_is_AMO_RMW (rg_req)) begin
             Fmt fmt_op = fshow_f5_AMO_op (rg_req.amo_funct7 [6:2]);
             if (verbosity >= 1) begin
-               $display ("%0d: %m.fav_write_to_ram: AMO ", cur_cycle, fmt_op);
+               $display ("%0d: %m.fav_amo_write_to_ram: AMO ", cur_cycle, fmt_op);
                $display ("      (va %08h) (rs2_val %016h) (f3 %03b)", rg_req.va, st_value, f3);
                $display ("      (load-result %016h)", ram_data);
             end
@@ -672,11 +672,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
             // Cancel LR/SC reservation if this store is for this addr
             if (rg_lrsc_pa == rg_req.va) rg_lrsc_valid <= False;
-         end
-
-         if (verbosity >= 1) begin
-            $display ("%0d: %m.fav_write_to_ram: ST", cur_cycle);
-            $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
          end
 
          if (! sc_fail) fa_write_to_ram (tcm_byte_addr, rg_req, st_value);
@@ -702,11 +697,13 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
       // For LR ops, update reservation regs
       if (fv_is_AMO_LR (rg_req)) begin
-         if (verbosity >= 1) $display ("%0d: %m.rl_tcm_rsp: LR-hit", cur_cycle);
+         if (verbosity >= 1) $display ("%0d: %m.rl_amo_rsp: LR-hit", cur_cycle);
          rg_lrsc_valid <= True;
          rg_lrsc_pa    <= rg_req.va;
          rg_lrsc_size  <= rg_req.f3 [1:0];
       end
+
+      rg_dmem_state <= MEM_TCM_RSP;
    endrule
 `endif
 
@@ -823,11 +820,11 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
                $display ("   dtcm_rd_port.put (word_addr %08h)", word_addr);
          end
 
-         // The next state depends on the op. If it is a LD/ST/LR move to the response state
-         // which allows the module to process the next request. If it is a RMW AMO op, move to
+         // The next state depends on the op. If it is a LD/ST move to the response state
+         // which allows the module to process the next request. If it is a AMO op, move to
          // the AMO state, effectively introducing a one-cycle bubble.
 `ifdef ISA_A
-         if (fv_is_AMO_SC (rg_req) || fv_is_AMO_RMW (rg_req))
+         if (fv_is_AMO_SC (dmem_req) || fv_is_AMO_RMW (dmem_req) || fv_is_AMO_LR (dmem_req))
             rg_dmem_state <= MEM_AMO_RSP;
          else begin
             // Clear the lrsc_word64
