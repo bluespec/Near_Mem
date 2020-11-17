@@ -125,15 +125,10 @@ interface ITCM_IFC;
    // Fabric side -- unused for TCMs
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
 
+`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the ITCM
-   interface AXI4_Slave_IFC #(Wd_Id_Dma, Wd_Addr_Dma, Wd_Data_Dma, Wd_User_Dma)  dma_server;
-
-   // Inform core that DDR4 has been initialized and is ready to accept requests
-   method Action ma_ddr4_ready;
-
-   // Misc. status; 0 = running, no error
-   (* always_ready *)
-   method Bit #(8) mv_status;
+   interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dma_server;
+`endif
 endinterface
 
 interface DTCM_IFC;
@@ -144,19 +139,17 @@ interface DTCM_IFC;
 
    // Fabric side
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
-   interface Near_Mem_Fabric_IFC mem_master;
+   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
 
-   // Inform core that DDR4 has been initialized and is ready to accept requests
-   method Action ma_ddr4_ready;
+`ifdef INCLUDE_GDB_CONTROL
+   // DMA server interface for back-door access to the DTCM
+   interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dma_server;
+`endif
 
 `ifdef WATCH_TOHOST
    method Action set_watch_tohost (Bool watch_tohost, Bit #(64) tohost_addr);
    method Bit #(64) mv_tohost_value;
 `endif
-
-   // Misc. status; 0 = running, no error
-   (* always_ready *)
-   method Bit #(8) mv_status;
 endinterface
 
 // ================================================================
@@ -209,6 +202,11 @@ module mkNear_Mem (Near_Mem_IFC);
    // Fabric side
    interface imem_master = itcm.mem_master;
 
+`ifdef INCLUDE_GDB_CONTROL
+   // Back-door from fabric into ITCM
+   interface imem_dma_server = itcm.dma_server;
+`endif
+
    // ----------------
    // DMem
 
@@ -216,10 +214,15 @@ module mkNear_Mem (Near_Mem_IFC);
    interface dmem = dtcm.dmem;
 
    // Fabric side
-   interface mem_master = dtcm.mem_master;
+   interface dmem_master = dtcm.mem_master;
+
+`ifdef INCLUDE_GDB_CONTROL
+   // Back-door from fabric into DTCM
+   interface dmem_dma_server = dtcm.dma_server;
+`endif
 
    // ----------------
-   // XXX Fence.I, Fence -- all fences are nops, right?
+   // Fence.I, Fence -- all fences are nops, right?
    interface server_fence_i = fv_dummy_server_stub ();
 
    interface Server server_fence;
@@ -240,17 +243,6 @@ module mkNear_Mem (Near_Mem_IFC);
 `endif
 
    // ----------------
-   // Back-door from fabric into ITCM
-   interface dma_server = itcm.dma_server;
-
-   // ----------------
-   // Indication that the DDR4 is ready to both AXI4 adapters
-   method Action ma_ddr4_ready;
-      dtcm.ma_ddr4_ready;
-      itcm.ma_ddr4_ready;
-   endmethod
-
-   // ----------------
    // For ISA tests: watch memory writes to <tohost> addr
 
 `ifdef WATCH_TOHOST
@@ -260,10 +252,6 @@ module mkNear_Mem (Near_Mem_IFC);
 
    method Bit #(64) mv_tohost_value = dtcm.mv_tohost_value;
 `endif
-
-   // Misc. status; 0 = running, no error. Since it reports only write errors,
-   // the imem_port will never report a non-zero status
-   method Bit #(8) mv_status = dtcm.mv_status;
 
 endmodule: mkNear_Mem
 
@@ -324,20 +312,37 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    TCM_AXI4_Adapter_IFC axi4_adapter<- mkTCM_AXI4_Adapter (
       verbosity_axi4, f_mem_req, f_mem_wdata, f_mem_rdata);
 
-   // The TCM RAM - dual-ported due to backdoor to change IMem contents
 `ifdef SYNTHESIS
+`ifdef INCLUDE_GDB_CONTROL
+   // The TCM RAM - dual-ported due to backdoor to change IMem contents
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
       <- mkBRAMCore2BE (n_words_BRAM, config_output_register_BRAM);
 `else
+   BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
+      <- mkBRAMCore1BE (n_words_BRAM, config_output_register_BRAM);
+`endif
+`else
+`ifdef INCLUDE_GDB_CONTROL
+   // The TCM RAM - dual-ported due to backdoor to change IMem contents
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
       <- mkBRAMCore2BELoad (n_words_BRAM, config_output_register_BRAM, "itcm.hex", load_file_is_binary_BRAM);
+`else
+   BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
+      <- mkBRAMCore1BELoad (n_words_BRAM, config_output_register_BRAM, "itcm.hex", load_file_is_binary_BRAM);
+`endif
 `endif
 
-   // Back-door access to the TCM RAM
-   let dma_port <- mkTCM_DMA_AXI4_Adapter (itcm.b, verbosity);
-
+`ifdef INCLUDE_GDB_CONTROL
    // The "front-door" to the itcm (port A)
    let iram = itcm.a;
+`else
+   let iram = itcm;
+`endif
+
+`ifdef INCLUDE_GDB_CONTROL
+   // Back-door access to the TCM RAM from the AXI4
+   let dma_port <- mkTCM_DMA_AXI4_Adapter (itcm.b, verbosity);
+`endif
 
    // Connect MMIO's memory interface to AXI4 fabric adapter
    mkConnection (mmio.g_mem_req,       axi4_adapter.p_mem_single_req);
@@ -395,13 +400,17 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       // for all the checks relating to the soc-map
       Fabric_Addr fabric_pc = fv_Addr_to_Fabric_Addr (pc);
 
+      // Check if f3 is legal, and if f3 and addr are compatible
+      let addr_is_aligned = fn_is_aligned (f3 [1:0], pc);
+
       // address checks
-      // mis-alignment
-      if (!fn_is_aligned (f3[1:0], pc)) begin
+      // Legality check -- aligned address, and address should not belong to the DTCM
+      if (soc_map.m_is_dtcm_addr_2 (fabric_pc) || !addr_is_aligned) begin
          rg_result_valid   <= True;
          rg_exc            <= True;
          rg_imem_state     <= MEM_TCM_RSP;
-         rg_exc_code       <= exc_code_INSTR_ADDR_MISALIGNED;
+         rg_exc_code       <= addr_is_aligned ? exc_code_INSTR_ACCESS_FAULT
+                                              : exc_code_INSTR_ADDR_MISALIGNED;
       end
 
       // serviced by the TCM
@@ -473,15 +482,11 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // For accesses outside TCM (fabric memory)
    interface mem_master = axi4_adapter.mem_master;
 
+`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into ITCM
    interface dma_server = dma_port.dma_server;
+`endif
 
-   // ----------------------------------------------------------------
-   // Misc. control and status
-   method Action ma_ddr4_ready = axi4_adapter.ma_ddr4_ready;
-
-   // Misc. status; 0 = running, no error
-   method Bit#(8) mv_status = axi4_adapter.mv_status;
 endmodule: mkITCM
 
 // ================================================================
@@ -560,13 +565,19 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       n_words_BRAM, config_output_register_BRAM, "dtcm.hex", load_file_is_binary_BRAM);
 `endif
 
+   let dtcm_rd_port = dtcm.a;
+   let dtcm_wr_port = dtcm.b;
+
+`ifdef INCLUDE_GDB_CONTROL
+   // In addition to LD/ST, debug accesses need to be able to read and write from the DTCM
+   // when GDB control is enabled. Back-door debug access to the DTCM shares the 'b' port
+   let dma_port <- mkTCM_DMA_AXI4_Adapter (dtcm_wr_port, verbosity);
+`endif
+
    // Connect MMIO's memory interface to AXI4 fabric adapter
    mkConnection (mmio.g_mem_req,       axi4_adapter.p_mem_single_req);
    mkConnection (mmio.g_write_data,    axi4_adapter.p_mem_single_write_data);
    mkConnection (mmio.p_mem_read_data, axi4_adapter.g_mem_single_read_data);
-
-   let dtcm_rd_port = dtcm.a;
-   let dtcm_wr_port = dtcm.b;
 
    // Continuous DTCM output
    let ram_out  = fn_extract_and_extend_bytes (rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
@@ -789,16 +800,20 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       let tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_addr - soc_map.m_dtcm_addr_base);
 
       // Check if f3 is legal, and if f3 and addr are compatible
-      if (! fn_is_aligned (f3 [1:0], addr)) begin
+      let addr_is_aligned = fn_is_aligned (f3 [1:0], addr);
+
+      // Legality check -- aligned address, and address should not belong to the ITCM
+      if (soc_map.m_is_itcm_addr_2 (fabric_addr) || !addr_is_aligned ) begin
          // Misaligned accesses not supported
          rg_result_valid   <= True;
          rg_exc            <= True;
          rg_dmem_state     <= MEM_TCM_RSP;
-         rg_exc_code       <= fv_exc_code_misaligned (dmem_req);
+         rg_exc_code       <= addr_is_aligned ? fv_exc_code_access_fault (dmem_req)
+                                              : fv_exc_code_misaligned (dmem_req);
       end
 
       // TCM reqs
-      else if (soc_map.m_is_dtcm_addr (fabric_addr)) begin
+      else if (soc_map.m_is_dtcm_addr_1 (fabric_addr)) begin
          rg_result_valid <= True;
          rg_exc          <= False;
 
@@ -851,8 +866,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // INTERFACE
 
    method Action reset ();
-      rg_dmem_state <= MEM_IDLE;
       rg_result_valid <= False;
+      rg_dmem_state <= MEM_IDLE;
+      dma_port.reset;
 
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
@@ -901,6 +917,11 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
    interface mem_master = axi4_adapter.mem_master;
 
+`ifdef INCLUDE_GDB_CONTROL
+   // Back-door from fabric into DTCM
+   interface dma_server = dma_port.dma_server;
+`endif
+
    // ----------------------------------------------------------------
    // Misc. control and status
 
@@ -920,10 +941,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    endmethod
 `endif
 
-   method Action ma_ddr4_ready = axi4_adapter.ma_ddr4_ready;
-
-   // Misc. status; 0 = running, no error
-   method Bit#(8) mv_status = axi4_adapter.mv_status;
 endmodule
 
 // ================================================================

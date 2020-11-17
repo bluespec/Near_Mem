@@ -46,41 +46,6 @@ import AXI4_Lite_Types  :: *;
 `endif
 
 // ================================================================
-// Near-Mem parameters (statically defined)
-
-// Fabric parameters for DMA channel into the near-mem. For a TCM
-// based system this serves as the backdoor loading mechanism.
-
-typedef Wd_Id     Wd_Id_Dma;
-typedef Wd_Addr   Wd_Addr_Dma;
-typedef Wd_Data   Wd_Data_Dma;
-typedef Wd_User   Wd_User_Dma;
-
-// ================================================================
-// This part of the interface is lifted out to surrounding modules.
-
-`ifdef MEM_512b
-
-typedef 16   Wd_Id_Mem;
-typedef 64   Wd_Addr_Mem;
-typedef 512  Wd_Data_Mem;
-typedef 0    Wd_User_Mem;
-
-`else
-
-typedef Wd_Id    Wd_Id_Mem;
-typedef Wd_Addr  Wd_Addr_Mem;
-typedef Wd_Data  Wd_Data_Mem;
-typedef Wd_User  Wd_User_Mem;
-
-`endif
-
-typedef AXI4_Master_IFC #(Wd_Id_Mem,
-			  Wd_Addr_Mem,
-			  Wd_Data_Mem,
-			  Wd_User_Mem)  Near_Mem_Fabric_IFC;
-
-// ================================================================
 
 interface Near_Mem_IFC;
    // Reset
@@ -95,8 +60,10 @@ interface Near_Mem_IFC;
    // Fabric side initiator for non-TCM ifetches
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) imem_master;
 
+`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the ITCM
-   interface AXI4_Slave_IFC #(Wd_Id_Dma, Wd_Addr_Dma, Wd_Data_Dma, Wd_User_Dma)  dma_server;
+   interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  imem_dma_server;
+`endif
 
    // ----------------
    // DMem
@@ -105,7 +72,12 @@ interface Near_Mem_IFC;
    interface DMem_IFC  dmem;
 
    // Fabric side (MMIO initiator interface)
-   interface Near_Mem_Fabric_IFC mem_master;
+   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) dmem_master;
+
+`ifdef INCLUDE_GDB_CONTROL
+   // DMA server interface for back-door access to the DTCM
+   interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dmem_dma_server;
+`endif
 
    // ----------------------------------------------------------------
    // Optional AXI4-Lite DMem slave interface
@@ -136,13 +108,6 @@ interface Near_Mem_IFC;
    method Bit #(64) mv_tohost_value;
 `endif
 
-   // Inform core that DDR4 has been initialized and is ready to accept requests
-   method Action ma_ddr4_ready;
-
-   // Misc. status; 0 = running, no error
-   (* always_ready *)
-   method Bit #(8) mv_status;
-
 endinterface
    
 // IMem: Instruction TCM
@@ -150,14 +115,6 @@ typedef struct {
    Addr pc;
    Bit #(3) f3;
 } IMem_Req deriving (Bits, Eq, FShow);
-
-`ifndef Near_Mem_TCM
-// ================================================================
-// Cache flush specs
-
-Bit #(1) flush_to_invalid = 0;
-Bit #(1) flush_to_clean   = 1;
-`endif
 
 // ================================================================
 // IMem interface
