@@ -305,7 +305,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // No WData for the IMem. Dummy interface to the AXI4 adapter
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
-   // Access to fabric for non-TCM requests
    IMMIO_IFC        mmio            <- mkIMMIO (
       rg_imem_req, f_mem_req, f_mem_rdata, verbosity_mmio);
 
@@ -334,26 +333,24 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 
 `ifdef INCLUDE_GDB_CONTROL
    // The "front-door" to the itcm (port A)
-   let iram = itcm.a;
+   let irom = itcm.a;
+   // The "back-door" for system bus accesses to the itcm
+   let iram = itcm.b;
 `else
-   let iram = itcm;
+   let irom = itcm;
 `endif
 
 `ifdef INCLUDE_GDB_CONTROL
    // Back-door access to the TCM RAM from the AXI4
-   let dma_port <- mkTCM_DMA_AXI4_Adapter (itcm.b, verbosity);
+   let dma_port <- mkTCM_DMA_AXI4_Adapter (iram, verbosity);
 `endif
-
-   // Connect MMIO's memory interface to AXI4 fabric adapter
-   mkConnection (mmio.g_mem_req,       axi4_adapter.p_mem_single_req);
-   mkConnection (mmio.p_mem_read_data, axi4_adapter.g_mem_single_read_data);
 
    SoC_Map_IFC soc_map <- mkSoC_Map;
 
    // Drive response from TCM -- loads, exceptions
    rule rl_tcm_rsp (rg_imem_state == MEM_TCM_RSP);
       // extract the instruction from the RAM data
-      let instr = fv_extract_instr (rg_imem_req.pc, iram.read);
+      let instr = fv_extract_instr (rg_imem_req.pc, irom.read);
 
       if (verbosity >= 1)
          $display ("%0d: %m.rl_tcm_rsp: pc %08h data %08h"
@@ -364,19 +361,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       dw_exc         <= rg_exc;
       dw_exc_code    <= rg_exc_code;
       dw_instr       <= instr;
-
-      // Back to idle for the next request
-      // rg_imem_state  <= MEM_IDLE;
-   endrule
-
-   // Drive response from MMIO
-   rule rl_mmio_rsp (rg_imem_state == MEM_MMIO_RSP);
-      match { .err, .ld_val } = mmio.result;
-      dw_valid          <= True;
-      dw_instr          <= ld_val;
-      dw_exc            <= err;
-      dw_exc_code       <= exc_code_INSTR_ACCESS_FAULT;
-      // rg_imem_state     <= MEM_IDLE;
    endrule
 
    // This rule is basically the body of method ma_req; decoupling
@@ -405,12 +389,11 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 
       // address checks
       // Legality check -- aligned address, and address should not belong to the DTCM
-      if (soc_map.m_is_dtcm_addr_2 (fabric_pc) || !addr_is_aligned) begin
+      if (!addr_is_aligned) begin
          rg_result_valid   <= True;
          rg_exc            <= True;
          rg_imem_state     <= MEM_TCM_RSP;
-         rg_exc_code       <= addr_is_aligned ? exc_code_INSTR_ACCESS_FAULT
-                                              : exc_code_INSTR_ADDR_MISALIGNED;
+         rg_exc_code       <= exc_code_INSTR_ADDR_MISALIGNED;
       end
 
       // serviced by the TCM
@@ -422,15 +405,15 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
          // Initiate RAM read
          Addr word_addr = fv_Fabric_Addr_to_Addr (
             (fabric_pc - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
-         iram.put (0, word_addr, ?);
+         irom.put (0, word_addr, ?);
       end
 
-      // outside TCM address space -- send to MMIO
+      // outside TCM address space -- respond with an access fault
       else begin
-         rg_result_valid   <= False;
-         rg_exc            <= False;
-         rg_imem_state     <= MEM_MMIO_RSP;
-         mmio.start;
+         rg_result_valid   <= True;
+         rg_exc            <= True;
+         rg_imem_state     <= MEM_TCM_RSP;
+         rg_exc_code       <= exc_code_INSTR_ACCESS_FAULT
       end
    endrule
 
@@ -475,12 +458,12 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 
       method Bool exc = dw_exc;
       method Exc_Code exc_code = dw_exc_code;
-      method WordXL tval = rg_imem_req.pc;   // XXX What is this?
+      method WordXL tval = rg_imem_req.pc;   // the faulting address. not always the PC
    endinterface
 
    // Fabric side
    // For accesses outside TCM (fabric memory)
-   interface mem_master = axi4_adapter.mem_master;
+   interface mem_master = dummy_AXI4_Master_ifc;
 
 `ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into ITCM
