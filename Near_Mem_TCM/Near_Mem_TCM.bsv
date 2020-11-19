@@ -305,9 +305,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // No WData for the IMem. Dummy interface to the AXI4 adapter
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
-   IMMIO_IFC        mmio            <- mkIMMIO (
-      rg_imem_req, f_mem_req, f_mem_rdata, verbosity_mmio);
-
    TCM_AXI4_Adapter_IFC axi4_adapter<- mkTCM_AXI4_Adapter (
       verbosity_axi4, f_mem_req, f_mem_wdata, f_mem_rdata);
 
@@ -397,7 +394,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       end
 
       // serviced by the TCM
-      else if (soc_map.m_is_itcm_addr_1 (fabric_pc)) begin
+      else if (soc_map.m_is_itcm_addr (fabric_pc)) begin
          rg_result_valid   <= True;
          rg_exc            <= False;
          rg_imem_state     <= MEM_TCM_RSP;
@@ -416,6 +413,8 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
          rg_exc_code       <= exc_code_INSTR_ACCESS_FAULT
       end
    endrule
+
+   AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) dummy_imem_master = dummy_AXI4_Master_ifc;
 
    // ----------------
    // INTERFACE
@@ -463,7 +462,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 
    // Fabric side
    // For accesses outside TCM (fabric memory)
-   interface mem_master = dummy_AXI4_Master_ifc;
+   interface mem_master = dummy_imem_master;
 
 `ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into ITCM
@@ -786,7 +785,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       let addr_is_aligned = fn_is_aligned (f3 [1:0], addr);
 
       // Legality check -- aligned address, and address should not belong to the ITCM
-      if (soc_map.m_is_itcm_addr_2 (fabric_addr) || !addr_is_aligned ) begin
+      if (soc_map.m_is_itcm_addr (fabric_addr) || !addr_is_aligned ) begin
          // Misaligned accesses not supported
          rg_result_valid   <= True;
          rg_exc            <= True;
@@ -796,7 +795,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       end
 
       // TCM reqs
-      else if (soc_map.m_is_dtcm_addr_1 (fabric_addr)) begin
+      else if (soc_map.m_is_dtcm_addr (fabric_addr)) begin
          rg_result_valid <= True;
          rg_exc          <= False;
 
