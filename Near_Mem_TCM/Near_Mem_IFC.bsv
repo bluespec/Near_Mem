@@ -74,10 +74,8 @@ interface Near_Mem_IFC;
    // Fabric side (MMIO initiator interface)
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) dmem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the DTCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dmem_dma_server;
-`endif
 
    // ----------------------------------------------------------------
    // Optional AXI4-Lite DMem slave interface

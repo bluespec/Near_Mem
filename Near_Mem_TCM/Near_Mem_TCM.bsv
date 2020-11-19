@@ -141,10 +141,8 @@ interface DTCM_IFC;
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the DTCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dma_server;
-`endif
 
 `ifdef WATCH_TOHOST
    method Action set_watch_tohost (Bool watch_tohost, Bit #(64) tohost_addr);
@@ -216,10 +214,8 @@ module mkNear_Mem (Near_Mem_IFC);
    // Fabric side
    interface dmem_master = dtcm.mem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into DTCM
    interface dmem_dma_server = dtcm.dma_server;
-`endif
 
    // ----------------
    // Fence.I, Fence -- all fences are nops, right?
@@ -414,7 +410,8 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       end
    endrule
 
-   AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) dummy_imem_master = dummy_AXI4_Master_ifc;
+   AXI4_Master_IFC #(
+      Wd_Id, Wd_Addr, Wd_Data, Wd_User) dummy_imem_master = dummy_AXI4_Master_ifc;
 
    // ----------------
    // INTERFACE
@@ -422,7 +419,9 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    method Action reset;
       rg_result_valid   <= False;
       rg_imem_state     <= MEM_IDLE;
+`ifdef INCLUDE_GDB_CONTROL
       dma_port.reset;
+`endif
 
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
@@ -550,11 +549,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    let dtcm_rd_port = dtcm.a;
    let dtcm_wr_port = dtcm.b;
 
-`ifdef INCLUDE_GDB_CONTROL
-   // In addition to LD/ST, debug accesses need to be able to read and write from the DTCM
-   // when GDB control is enabled. Back-door debug access to the DTCM shares the 'b' port
+   // In addition to LD/ST, DMA/debug accesses need to be able to read and write from the
+   // DTCM. Back-door debug/DMA access to the DTCM shares the 'b' port
    let dma_port <- mkTCM_DMA_AXI4_Adapter (dtcm_wr_port, verbosity);
-`endif
 
    // Connect MMIO's memory interface to AXI4 fabric adapter
    mkConnection (mmio.g_mem_req,       axi4_adapter.p_mem_single_req);
@@ -899,10 +896,8 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
    interface mem_master = axi4_adapter.mem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into DTCM
    interface dma_server = dma_port.dma_server;
-`endif
 
    // ----------------------------------------------------------------
    // Misc. control and status
