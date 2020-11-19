@@ -589,7 +589,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    Bool rd_addr_aligned = (
          (rd_byte_in_tcm_word == 0)
       || (rd_byte_in_tcm_word == 4));
-   Bool lower_word = (rd_byte_in_tcm_word == 0);
+   Bool rd_lower_word = (rd_byte_in_tcm_word == 0);
 `elsif FABRIC64
    Bool rd_addr_aligned = (rd_byte_in_tcm_word == 0);
 `endif
@@ -625,8 +625,8 @@ module mkTCM_DMA_AXI4_Adapter #(
    // Read responses: get word from RAM and respond
    rule rl_rd_rsp (rg_state == STATE_READ_RESPONDING);
 `ifdef FABRIC32
-      TCM_Word_B words = unpack (ram.read);
-      Bit#(Wd_Data) word = lower_word ? pack (words[3:0]) : pack (words [7:4]);
+      let words = pack (ram.read);
+      Bit#(Wd_Data) word = rd_lower_word ? words[31:0] : words [63:32];
 `elsif FABRIC64
       Bit#(Wd_Data) word = pack(ram.read);
 `endif
@@ -669,7 +669,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    Bool wr_addr_aligned = (
          (wr_byte_in_tcm_word == 0)
       || (wr_byte_in_tcm_word == 4));
-   Bool lower_word = (wr_byte_in_tcm_word == 0);
+   Bool wr_lower_word = (wr_byte_in_tcm_word == 0);
 `elsif FABRIC64
    Bool wr_addr_aligned = (wr_byte_in_tcm_word == 0);
 `endif
@@ -712,7 +712,7 @@ module mkTCM_DMA_AXI4_Adapter #(
 
       // Strobe generation
 `ifdef FABRIC32
-      Bit #(Bytes_per_TCM_Word) strobe = lower_word ? 8'hf : 8'hf0; 
+      Bit #(Bytes_per_TCM_Word) strobe = wr_lower_word ? 8'hf : 8'hf0; 
 `elsif FABRIC64
       Bit #(Bytes_per_TCM_Word) strobe = 8'hff;
 `endif
