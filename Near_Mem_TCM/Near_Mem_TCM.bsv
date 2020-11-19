@@ -410,7 +410,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
          rg_result_valid   <= True;
          rg_exc            <= True;
          rg_imem_state     <= MEM_TCM_RSP;
-         rg_exc_code       <= exc_code_INSTR_ACCESS_FAULT
+         rg_exc_code       <= exc_code_INSTR_ACCESS_FAULT;
       end
    endrule
 
