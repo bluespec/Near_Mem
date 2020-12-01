@@ -1,0 +1,2 @@
+Different interconnect fabrics which serve as the memory-side of the Near-Mem module reside here.
+These are generally implemented in separate submodules.
