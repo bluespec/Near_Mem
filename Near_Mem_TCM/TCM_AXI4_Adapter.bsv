@@ -244,7 +244,7 @@ module mkTCM_AXI4_Adapter #(
 	    data = { data [31:0], rg_rd_data_lower32 };
 	    do_enq = True;
 	 end
-      end	       
+      end
 
       if (do_enq) begin
 	 let rsp = Read_Data {ok: ok, data: data};
