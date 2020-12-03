@@ -47,17 +47,13 @@ interface DMMIO_IFC;
    method Action start;
 
    method Tuple3 #(Bool, Bit #(64), Bit #(64)) result;
-
-   interface Get #(Single_Req)  g_mem_req;
-   interface Get #(Bit #(64))   g_write_data;
-   interface Put #(Read_Data)   p_mem_read_data;
 endinterface
 
 // ================================================================
 
-typedef enum {FSM_IDLE,
-	      FSM_START,
-	      FSM_READ_RSP} FSM_State
+typedef enum {MMIO_IDLE,
+	      MMIO_START,
+	      MMIO_READ_RSP} MMIO_State
 deriving (Bits, Eq, FShow);
 
 // ================================================================
@@ -71,7 +67,7 @@ module mkIMMIO #(
    , Bit#(2) verbosity
 ) (IMMIO_IFC);
    
-   Reg #(FSM_State) rg_fsm_state <- mkReg (FSM_IDLE);
+   Reg #(MMIO_State) rg_mmio_state <- mkReg (MMIO_IDLE);
 
    // Non-VM MMIO: PA = VA 
    let req_pa  = fn_WordXL_to_PA (req.pc);
@@ -84,7 +80,7 @@ module mkIMMIO #(
    // Issue read request to mem for load, LR, and AMO Read-Modify-Write
    // (all ops other than store and SC)
 
-   rule rl_read_req (rg_fsm_state == FSM_START);
+   rule rl_read_req (rg_mmio_state == MMIO_START);
       if (verbosity >= 1)
 	 $display ("%0d: %m.rl_read_req: f3 %0h vaddr %0h  paddr %0h",
 		   cur_cycle, req.f3, req.pc, req_pa);
@@ -92,13 +88,13 @@ module mkIMMIO #(
 			    addr:      zeroExtend (req_pa),
 			    size_code: req.f3 [1:0]};
       f_single_reqs.enq (r);
-      rg_fsm_state <= FSM_READ_RSP;
+      rg_mmio_state <= MMIO_READ_RSP;
    endrule
 
    // ----------------------------------------------------------------
    // Receive read response from mem for Load
 
-   rule rl_read_rsp (rg_fsm_state == FSM_READ_RSP);
+   rule rl_read_rsp (rg_mmio_state == MMIO_READ_RSP);
       let read_data <- pop (f_read_data);
 
       if (verbosity >= 1) begin
@@ -112,7 +108,7 @@ module mkIMMIO #(
 	    $display ("    MEM_RSP_ERR");
 
 	 rg_err       <= True;
-	 rg_fsm_state <= FSM_IDLE;
+	 rg_mmio_state <= MMIO_IDLE;
       end
 
       // Successful read
@@ -123,7 +119,7 @@ module mkIMMIO #(
 	 rg_ld_val <= truncate (ld_val_bits);
 	 if (verbosity >= 1)
 	   $display ("    Instruction load: f3 %0h ld_val %0h", req.f3, ld_val_bits);
-	 rg_fsm_state    <= FSM_IDLE;
+	 rg_mmio_state    <= MMIO_IDLE;
       end
    endrule
 
@@ -132,10 +128,10 @@ module mkIMMIO #(
 
    method Action start;
       rg_err <= False;
-      rg_fsm_state <= FSM_START;
+      rg_mmio_state <= MMIO_START;
    endmethod
 
-   method result () if (rg_fsm_state == FSM_IDLE);
+   method result () if (rg_mmio_state == MMIO_IDLE);
       return tuple2 (rg_err, rg_ld_val);
    endmethod
 
@@ -152,13 +148,13 @@ endmodule
 
 module mkDMMIO #(
      MMU_Cache_Req req
-   , FIFOF #(Single_Req) f_single_reqs
+   , FIFOF #(Single_Req) f_mem_reqs
    , FIFOF #(Bit #(64))  f_write_data
    , FIFOF #(Read_Data)  f_read_data
    , Bit#(2) verbosity
 ) (DMMIO_IFC);
    
-   Reg #(FSM_State) rg_fsm_state <- mkReg (FSM_IDLE);
+   Reg #(MMIO_State) rg_mmio_state <- mkReg (MMIO_IDLE);
 
    // Non-VM MMIO: PA = VA 
    let req_pa  = fn_WordXL_to_PA (req.va);
@@ -171,8 +167,6 @@ module mkDMMIO #(
    // ----------------
    // Memory interface
 
-   FIFOF #(Single_Req)  f_single_reqs  <- mkFIFOF1;
-   FIFOF #(Read_Data)   f_read_data  <- mkFIFOF1;
 
    // ----------------------------------------------------------------
    // Help-function for single-writes to mem
@@ -186,7 +180,7 @@ module mkDMMIO #(
 	 let r   = Single_Req {is_read:   False,
 			       addr:      zeroExtend (req_pa),
 			       size_code: req.f3 [1:0]};
-	 f_single_reqs.enq (r);
+	 f_mem_reqs.enq (r);
 	 f_write_data.enq (data);
       endaction
    endfunction
@@ -195,27 +189,28 @@ module mkDMMIO #(
    // Issue read request to mem for load, LR, and AMO Read-Modify-Write
    // (all ops other than store and SC)
 
-   rule rl_read_req ((rg_fsm_state == FSM_START)
-		     && (req.op != CACHE_ST)
+   rule rl_read_req (
+         (rg_mmio_state == MMIO_START)
+      && (req.op != CACHE_ST)
 `ifdef ISA_A
-		     && (! fv_is_AMO_SC (req))
+      && (! fv_is_AMO_SC (req))
 `endif
-                     );
+   );
       if (verbosity >= 1)
 	 $display ("%0d: %m.rl_read_req: f3 %0h vaddr %0h  paddr %0h",
 		   cur_cycle, req.f3, req.va, req_pa);
       let r   = Single_Req {is_read:   True,
 			    addr:      zeroExtend (req_pa),
 			    size_code: req.f3 [1:0]};
-      f_single_reqs.enq (r);
-      rg_fsm_state <= FSM_READ_RSP;
+      f_mem_reqs.enq (r);
+      rg_mmio_state <= MMIO_READ_RSP;
    endrule
 
    // ----------------------------------------------------------------
    // Receive read response from mem for Load, LR and AMO Read-Modify-Write
    // (all ops other than store and SC)
 
-   rule rl_read_rsp (rg_fsm_state == FSM_READ_RSP);
+   rule rl_read_rsp (rg_mmio_state == MMIO_READ_RSP);
       let read_data <- pop (f_read_data);
 
       if (verbosity >= 1) begin
@@ -229,12 +224,13 @@ module mkDMMIO #(
 	    $display ("    MEM_RSP_ERR");
 
 	 rg_err       <= True;
-	 rg_fsm_state <= FSM_IDLE;
+	 rg_mmio_state <= MMIO_IDLE;
       end
 
       // Successful read
       else begin
-	 Bit #(64) ld_val_bits = fv_from_byte_lanes (zeroExtend (req_pa), req.f3 [1:0], read_data.data);
+	 Bit #(64) ld_val_bits = fv_from_byte_lanes (
+            zeroExtend (req_pa), req.f3 [1:0], read_data.data);
 
 	 // Loads and LR
 	 if ((req.op == CACHE_LD) || fv_is_AMO_LR (req)) begin
@@ -263,14 +259,16 @@ module mkDMMIO #(
 	    rg_final_st_val <= final_st_val;
 	 end
 `endif
-	 rg_fsm_state    <= FSM_IDLE;
+	 rg_mmio_state    <= MMIO_IDLE;
       end
    endrule
 
    // ----------------------------------------------------------------
    // Store requests
 
-   rule rl_write_req ((rg_fsm_state == FSM_START) && (req.op == CACHE_ST));
+   rule rl_write_req (
+         (rg_mmio_state == MMIO_START)
+      && (req.op == CACHE_ST));
       if (verbosity >= 2)
 	 $display ("%0d: %m.rl_write_req; f3 %0h  vaddr %0h  paddr %0h  word64 %0h",
 		   cur_cycle, req.f3, req.va, req_pa, req.st_value);
@@ -280,7 +278,7 @@ module mkDMMIO #(
       fa_mem_single_write (data);
 
       rg_final_st_val <= req.st_value;
-      rg_fsm_state    <= FSM_IDLE;
+      rg_mmio_state    <= MMIO_IDLE;
 
       if (verbosity >= 3)
 	 $display ("    goto MMIO_DONE");
@@ -290,10 +288,12 @@ module mkDMMIO #(
    // ----------------------------------------------------------------
    // Memory-mapped I/O AMO_SC requests. Always fail (and never do the write)
 
-   rule rl_AMO_SC ((rg_fsm_state == FSM_START) && fv_is_AMO_SC (req));
+   rule rl_AMO_SC (
+         (rg_mmio_state == MMIO_START)
+      && fv_is_AMO_SC (req));
 
       rg_ld_val    <= 1;    // 1 is LR/SC failure value
-      rg_fsm_state <= FSM_IDLE;
+      rg_mmio_state <= MMIO_IDLE;
 
       if (verbosity >= 1) begin
 	 $display ("%0d: %m.rl_AMO_SC; f3 %0h  vaddr %0h  paddr %0h  st_value %0h",
@@ -308,20 +308,14 @@ module mkDMMIO #(
    // INTERFACE
 
    method Action start;
+      rg_mmio_state <= MMIO_START;
       rg_err <= False;
-      rg_fsm_state <= FSM_START;
    endmethod
 
-   method result () if (rg_fsm_state == FSM_IDLE);
+   method result () if (rg_mmio_state == MMIO_IDLE);
       return tuple3 (rg_err, rg_ld_val, rg_final_st_val);
    endmethod
 
-   // ----------------
-   // Memory interface (for refills, writebacks)
-
-   interface Get g_mem_req       = toGet (f_single_reqs);
-   interface Get g_write_data    = toGet (f_write_data);
-   interface Put p_mem_read_data = toPut (f_read_data);
 endmodule
 
 // ================================================================

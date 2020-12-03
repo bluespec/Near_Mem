@@ -553,11 +553,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // DTCM. Back-door debug/DMA access to the DTCM shares the 'b' port
    let dma_port <- mkTCM_DMA_AXI4_Adapter (dtcm_wr_port, verbosity);
 
-   // Connect MMIO's memory interface to AXI4 fabric adapter
-   mkConnection (mmio.g_mem_req,       axi4_adapter.p_mem_single_req);
-   mkConnection (mmio.g_write_data,    axi4_adapter.p_mem_single_write_data);
-   mkConnection (mmio.p_mem_read_data, axi4_adapter.g_mem_single_read_data);
-
    // Continuous DTCM output
    let ram_out  = fn_extract_and_extend_bytes (rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
 

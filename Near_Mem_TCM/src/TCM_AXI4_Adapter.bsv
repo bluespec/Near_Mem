@@ -110,13 +110,6 @@ interface TCM_AXI4_Adapter_IFC;
    method Action  reset;
 
    // ----------------
-   // interface for word/sub-word read/write client
-
-   interface Put #(Single_Req) p_mem_single_req;
-   interface Put #(Bit #(64))  p_mem_single_write_data;
-   interface Get #(Read_Data)  g_mem_single_read_data;
-
-   // ----------------
    // Fabric master interface
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
 
@@ -487,13 +480,6 @@ module mkTCM_AXI4_Adapter #(
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
    endmethod
-
-   // ----------------
-   // interface for word/sub-word read/write client
-
-   interface Put p_mem_single_req        = toPut (f_single_reqs);
-   interface Put p_mem_single_write_data = toPut (f_single_write_data);
-   interface Get g_mem_single_read_data  = toGet (f_single_read_data);
 
    // ----------------
    // Fabric master interface
