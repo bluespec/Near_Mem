@@ -128,7 +128,7 @@ bluesim_simulator:
 
 .PHONY: clean
 clean:
-	rm -r  build_bdir/*  *~
+	rm -r -f build_dir  *~
 
 .PHONY: full_clean
 full_clean:

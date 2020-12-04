@@ -38,8 +38,14 @@ import ISA_Decls        :: *;
 import TCM_Decls        :: *;
 
 import MMU_Cache_Common :: *;
-import AXI4_Types       :: *;
 import Fabric_Defs      :: *;
+
+import AXI4_Types       :: *;
+
+`ifdef FABRIC_AHBL
+import AHBL_Types       :: *;
+import AHBL_Defs        :: *;
+`endif
 
 `ifdef INCLUDE_DMEM_SLAVE
 import AXI4_Lite_Types  :: *;
@@ -71,11 +77,20 @@ interface Near_Mem_IFC;
    // CPU side
    interface DMem_IFC  dmem;
 
+`ifdef FABRIC_AXI4
    // Fabric side (MMIO initiator interface)
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) dmem_master;
+`endif
 
+`ifdef FABRIC_AHBL
+   // Fabric side (MMIO initiator interface)
+   interface AHBL_Master_IFC #(AHB_Wd_Data) dmem_master;
+`endif
+
+`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the DTCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dmem_dma_server;
+`endif
 
    // ----------------------------------------------------------------
    // Optional AXI4-Lite DMem slave interface
