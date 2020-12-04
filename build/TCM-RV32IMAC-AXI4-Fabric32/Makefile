@@ -14,8 +14,8 @@ BSC_COMPILATION_FLAGS += \
 		         -D ISA_I  -D ISA_M  -D ISA_A  -D ISA_C \
 			 -D Near_Mem_TCM \
 			 -D FABRIC32 \
+			 -D FABRIC_AXI4 \
 			 -D WATCH_TOHOST \
-			 -D STANDALONE \
 
 # ================================================================
 # Search path for bsc for .bsv files
