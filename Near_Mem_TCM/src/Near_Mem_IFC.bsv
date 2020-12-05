@@ -78,8 +78,13 @@ interface Near_Mem_IFC;
    interface DMem_IFC  dmem;
 
 `ifdef FABRIC_AXI4
+`ifdef DUAL_FABRIC
+   // Fabric side (MMIO initiator interface)
+   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) nmio_master;
+`else
    // Fabric side (MMIO initiator interface)
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) dmem_master;
+`endif
 `endif
 
 `ifdef FABRIC_AHBL

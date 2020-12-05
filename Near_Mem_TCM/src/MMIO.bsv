@@ -149,6 +149,10 @@ endmodule
 module mkDMMIO #(
      MMU_Cache_Req req
    , FIFOF #(Single_Req) f_mem_reqs
+`ifdef DUAL_FABRIC
+   , FIFOF #(Single_Req) f_nmio_reqs
+   , Bool                is_external_req
+`endif
    , FIFOF #(Bit #(64))  f_write_data
    , FIFOF #(Read_Data)  f_read_data
    , Bit#(2) verbosity
@@ -180,7 +184,12 @@ module mkDMMIO #(
 	 let r   = Single_Req {is_read:   False,
 			       addr:      zeroExtend (req_pa),
 			       size_code: req.f3 [1:0]};
-	 f_mem_reqs.enq (r);
+`ifdef DUAL_FABRIC
+      let request_fifo = is_external_req ? f_mem_reqs : f_nmio_reqs;
+`else
+      let request_fifo = f_mem_reqs;
+`endif
+         request_fifo.enq (r);
 	 f_write_data.enq (data);
       endaction
    endfunction
@@ -202,7 +211,12 @@ module mkDMMIO #(
       let r   = Single_Req {is_read:   True,
 			    addr:      zeroExtend (req_pa),
 			    size_code: req.f3 [1:0]};
-      f_mem_reqs.enq (r);
+`ifdef DUAL_FABRIC
+      let request_fifo = is_external_req ? f_mem_reqs : f_nmio_reqs;
+`else
+      let request_fifo = f_mem_reqs;
+`endif
+      request_fifo.enq (r);
       rg_mmio_state <= MMIO_READ_RSP;
    endrule
 

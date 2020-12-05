@@ -56,6 +56,7 @@ package Near_Mem_TCM;
 
 import ConfigReg        :: *;
 import FIFOF            :: *;
+import SpecialFIFOs     :: *;
 import GetPut           :: *;
 import ClientServer     :: *;
 import BRAMCore         :: *;
@@ -150,10 +151,15 @@ interface DTCM_IFC;
    // CPU side
    interface DMem_IFC  dmem;
 
-   // Fabric side
+   // Fabric Interfaces
 `ifdef FABRIC_AXI4
+`ifdef DUAL_FABRIC
+   // For accesses outside TCM (fabric memory, and memory-mapped I/O)
+   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) nmio_master;
+`else
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
+`endif
 `endif
 
 `ifdef FABRIC_AHBL
@@ -235,6 +241,11 @@ module mkNear_Mem (Near_Mem_IFC);
 
    // Fabric side
    interface dmem_master = dtcm.mem_master;
+
+`ifdef DUAL_FABRIC
+   // Near end (near-mem IO)
+   interface nmio_master = dtcm.nmio_master;
+`endif
 
 `ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into DTCM
@@ -325,16 +336,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // No WData for the IMem. Dummy interface to the AXI4 adapter
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
-`ifdef SYNTHESIS
-`ifdef INCLUDE_GDB_CONTROL
-   // The TCM RAM - dual-ported due to backdoor to change IMem contents
-   BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
-      <- mkBRAMCore2BE (n_words_BRAM, config_output_register_BRAM);
-`else
-   BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
-      <- mkBRAMCore1BE (n_words_BRAM, config_output_register_BRAM);
-`endif
-`else
 `ifdef INCLUDE_GDB_CONTROL
    // The TCM RAM - dual-ported due to backdoor to change IMem contents
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
@@ -342,7 +343,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 `else
    BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
       <- mkBRAMCore1BELoad (n_words_BRAM, config_output_register_BRAM, "itcm.hex", load_file_is_binary_BRAM);
-`endif
 `endif
 
 `ifdef INCLUDE_GDB_CONTROL
@@ -502,7 +502,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    //            1: Requests and responses
    //            2: rule firings
    //            3: + detail
-   Bit#(2) verbosity_mmio = 0;
 
    // Module state
    Reg #(Mem_State)           rg_dmem_state     <- mkReg (MEM_IDLE);
@@ -540,20 +539,36 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    Reg #(Bit #(64))           rg_tohost_value   <- mkReg (0);
 `endif
 
-   // Requests and data to/from memory (AXI4 fabric)
+   // Requests and data to/from non-TCM memory (external fabrics)
+`ifdef DUAL_FABRIC
+   FIFOF #(Single_Req)        f_nmio_req        <- mkFIFOF1;
+   FIFOF #(Bool)              f_is_mem_req      <- mkFIFOF1;
+`endif
    FIFOF #(Single_Req)        f_mem_req         <- mkFIFOF1;
    FIFOF #(Bit #(64))         f_mem_wdata       <- mkFIFOF1;
    FIFOF #(Read_Data)         f_mem_rdata       <- mkFIFOF1;
 
    // Access to fabric for non-TCM requests
+   Bit#(2) verbosity_mmio = 0;
    DMMIO_IFC                  mmio              <- mkDMMIO (
-      rg_req, f_mem_req, f_mem_wdata, f_mem_rdata, verbosity_mmio);
+        rg_req
+      , f_mem_req
+`ifdef DUAL_FABRIC
+      , f_nmio_req
+      , f_is_mem_req.first
+`endif
+      , f_mem_wdata, f_mem_rdata, verbosity_mmio);
 
    // What fabric do we use -- AXI4 or AHBL. Select any one.
    Bit#(2) verbosity_fabric = 0;
 `ifdef FABRIC_AXI4
+`ifdef DUAL_FABRIC
+   TCM_AXI4_Adapter_IFC nmio_fabric_adapter<- mkTCM_AXI4_Adapter (
+      verbosity_fabric, f_nmio_req, f_mem_wdata, f_mem_rdata);
+`else
    TCM_AXI4_Adapter_IFC fabric_adapter<- mkTCM_AXI4_Adapter (
       verbosity_fabric, f_mem_req, f_mem_wdata, f_mem_rdata);
+`endif
 `endif
 
 `ifdef FABRIC_AHBL
@@ -567,13 +582,8 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // rl_req have not been written to be mutually exclusive. For a non-pipelined
    // processor, it is possible to work with a single-ported BRAM while sacrificing
    // concurrency between the response and request phases.
-`ifdef SYNTHESIS
-   BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BE (
-      n_words_BRAM, config_output_register_BRAM);
-`else
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (
       n_words_BRAM, config_output_register_BRAM, "dtcm.hex", load_file_is_binary_BRAM);
-`endif
 
    let dtcm_rd_port = dtcm.a;
    let dtcm_wr_port = dtcm.b;
@@ -763,7 +773,10 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       // dw_final_st_val   <= final_st_val;
       dw_exc            <= err;
       dw_exc_code       <= fv_exc_code_access_fault (rg_req);
-      // rg_dmem_state     <= MEM_IDLE;
+
+`ifdef DUAL_FABRIC
+      f_is_mem_req.deq;
+`endif
 
       if (verbosity >= 1)
          $display ("%0d: %m.rl_mmio_rsp: (word64 %016h) (final_st_val %016h)"
@@ -863,6 +876,12 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          rg_result_valid   <= False;
          rg_exc            <= False;
          rg_dmem_state     <= MEM_MMIO_RSP;
+`ifdef DUAL_FABRIC
+         // When two fabrics are present further decode is necessary to decide if the non 
+         // TCM address is meant for the internal (nmio) fabric or the external fabric
+         let is_mem_req = !soc_map.m_is_near_mem_IO_addr (fabric_addr);
+         f_is_mem_req.enq (is_mem_req);
+`endif
          mmio.start;
       end
    endrule
@@ -921,7 +940,11 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       method Bit #(64)  st_amo_val  = dw_final_st_val;
    endinterface
 
-   // Fabric side
+   // Fabric Interfaces
+`ifdef DUAL_FABRIC
+   // A separate nmio interface when we have a dual-fabric setup
+   interface nmio_master = nmio_fabric_adapter.mem_master;
+`endif
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
    interface mem_master = fabric_adapter.mem_master;
 
