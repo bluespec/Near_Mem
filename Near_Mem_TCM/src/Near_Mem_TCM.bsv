@@ -879,7 +879,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 `ifdef DUAL_FABRIC
          // When two fabrics are present further decode is necessary to decide if the non 
          // TCM address is meant for the internal (nmio) fabric or the external fabric
-         let is_mem_req = !soc_map.m_is_near_mem_IO_addr (fabric_addr);
+         let is_mem_req = !soc_map.m_is_nmio_addr (fabric_addr);
          f_is_mem_req.enq (is_mem_req);
 `endif
          mmio.start;
