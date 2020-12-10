@@ -63,9 +63,6 @@ interface Near_Mem_IFC;
    // CPU side
    interface IMem_IFC  imem;
 
-   // Fabric side initiator for non-TCM ifetches
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) imem_master;
-
    // DMA server interface for back-door access to the ITCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  imem_dma_server;
 

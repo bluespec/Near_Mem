@@ -134,9 +134,6 @@ interface ITCM_IFC;
    // CPU side
    interface IMem_IFC  imem;
 
-   // Fabric side -- unused for TCMs
-   interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
-
    // DMA server interface for back-door access to the ITCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dma_server;
 endinterface
@@ -218,9 +215,6 @@ module mkNear_Mem (Near_Mem_IFC);
 
    // CPU side
    interface imem = itcm.imem;
-
-   // Fabric side
-   interface imem_master = itcm.mem_master;
 
    // Back-door from fabric into ITCM
    interface imem_dma_server = itcm.dma_server;
@@ -411,9 +405,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       end
    endrule
 
-   AXI4_Master_IFC #(
-      Wd_Id, Wd_Addr, Wd_Data, Wd_User) dummy_imem_master = dummy_AXI4_Master_ifc;
-
    // ----------------
    // INTERFACE
 
@@ -457,10 +448,6 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       method Exc_Code exc_code = dw_exc_code;
       method WordXL tval = rg_imem_req.pc;   // the faulting address. not always the PC
    endinterface
-
-   // Fabric side
-   // For accesses outside TCM (fabric memory)
-   interface mem_master = dummy_imem_master;
 
    // Back-door from fabric into ITCM
    interface dma_server = dma_port.dma_server;
