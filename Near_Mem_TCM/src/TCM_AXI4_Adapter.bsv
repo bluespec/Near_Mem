@@ -109,8 +109,7 @@ module mkTCM_AXI4_Adapter #(
 
    // Limit the number of reads/writes outstanding to 15
    // TODO: change these to concurrent up/down counters?
-   Reg #(Bit #(4)) rg_rd_rsps_pending <- mkReg (0);
-   Reg #(Bit #(4)) rg_wr_rsps_pending <- mkReg (0);
+   Reg #(Bool) rg_wr_rsps_pending <- mkReg (False);
 
    Reg #(Bool) rg_ddr4_ready <- mkReg (False);
 
@@ -156,7 +155,6 @@ module mkTCM_AXI4_Adapter #(
       Bool last_beat = (rg_rd_beat == (rd_req_beats - 1));
       if (last_beat) begin
 	 f_rd_rsp_control.deq;
-	 rg_rd_rsps_pending <= rg_rd_rsps_pending - 1;
       end
 
       let rd_data <- pop_o (master_xactor.o_rd_data);
@@ -209,8 +207,7 @@ module mkTCM_AXI4_Adapter #(
 
    rule rl_single_read_req (f_single_reqs.first.is_read
 			    && rg_ddr4_ready
-			    && (rg_rd_rsps_pending < '1)
-			    && (rg_wr_rsps_pending == 0));
+			    && (!rg_wr_rsps_pending));
       let         req        <- pop (f_single_reqs);
       Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (req.addr);
       AXI4_Size   fabric_size = fv_size_code_to_AXI4_Size (req.size_code);
@@ -231,7 +228,7 @@ module mkTCM_AXI4_Adapter #(
 
       let mem_req_rd_addr = AXI4_Rd_Addr {arid:     fabric_default_id,
 					  araddr:   fabric_addr,
-					  arlen:    0,           // burst len = arlen+1
+					  arlen:    fabric_len,   // burst len = arlen+1
 					  arsize:   fabric_size,
 					  arburst:  fabric_default_burst,
 					  arlock:   fabric_default_lock,
@@ -245,7 +242,6 @@ module mkTCM_AXI4_Adapter #(
       f_rd_rsp_control.enq (tuple3 (req.size_code, req.addr [2], num_beats));
       rg_rd_client_id    <= client_id_single;
       rg_rd_beat         <= 0;
-      rg_rd_rsps_pending <= rg_rd_rsps_pending + 1;
    endrule
 
    // ****************************************************************
@@ -256,14 +252,14 @@ module mkTCM_AXI4_Adapter #(
       let wr_resp <- pop_o (master_xactor.o_wr_resp);
 
       Bool err = False;
-      if (rg_wr_rsps_pending == 0) begin
+      if (!rg_wr_rsps_pending) begin
 	 rg_write_error <= True;
 
 	 $display ("%0d: %m.rl_write_rsp: ERROR not expecting any write-response:", cur_cycle);
 	 $display ("    ", fshow (wr_resp));
       end
       else begin
-	 rg_wr_rsps_pending <= rg_wr_rsps_pending - 1;
+	 rg_wr_rsps_pending <= False;
 	 if (wr_resp.bresp != axi4_resp_okay) begin
 	    rg_write_error <= True;
 	    if (verbosity >= 1) begin
@@ -272,8 +268,7 @@ module mkTCM_AXI4_Adapter #(
 	    end
 	 end
 	 else if (verbosity >= 1) begin
-	    $display ("%0d: %m.rl_write_rsp: pending=%0d, ",
-		      cur_cycle, rg_wr_rsps_pending, fshow (wr_resp));
+	    $display ("%0d: %m.rl_write_rsp: ", cur_cycle, fshow (wr_resp));
 	 end
       end
    endrule
@@ -373,8 +368,7 @@ module mkTCM_AXI4_Adapter #(
 
    rule rl_single_write_req ((! f_single_reqs.first.is_read)
 			     && rg_ddr4_ready
-			     && (rg_rd_rsps_pending == 0)
-			     && (rg_wr_rsps_pending < '1));
+			     && (!rg_wr_rsps_pending));
       let req <- pop (f_single_reqs);
 
       Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (req.addr);
@@ -407,7 +401,7 @@ module mkTCM_AXI4_Adapter #(
 				     req.size_code,
 				     req.addr [2:0],
 				     num_beats));
-      rg_wr_rsps_pending <= rg_wr_rsps_pending + 1;
+      rg_wr_rsps_pending <= True;
 
       // Debugging
       if (verbosity >= 1)
