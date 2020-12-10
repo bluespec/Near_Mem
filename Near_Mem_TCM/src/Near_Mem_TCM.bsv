@@ -79,9 +79,7 @@ import Near_Mem_IFC     :: *;
 import MMU_Cache_Common :: *;
 import MMIO             :: *;
 
-`ifdef INCLUDE_GDB_CONTROL
 import TCM_DMA_AXI4_Adapter :: *;
-`endif
 
 `ifdef FABRIC_AXI4
 import TCM_AXI4_Adapter :: *;
@@ -139,10 +137,8 @@ interface ITCM_IFC;
    // Fabric side -- unused for TCMs
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the ITCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dma_server;
-`endif
 endinterface
 
 interface DTCM_IFC;
@@ -167,10 +163,8 @@ interface DTCM_IFC;
    interface AHBL_Master_IFC #(AHB_Wd_Data) mem_master;
 `endif
 
-`ifdef INCLUDE_GDB_CONTROL
    // DMA server interface for back-door access to the DTCM
    interface AXI4_Slave_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User)  dma_server;
-`endif
 
 `ifdef WATCH_TOHOST
    method Action set_watch_tohost (Bool watch_tohost, Bit #(64) tohost_addr);
@@ -228,10 +222,8 @@ module mkNear_Mem (Near_Mem_IFC);
    // Fabric side
    interface imem_master = itcm.mem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into ITCM
    interface imem_dma_server = itcm.dma_server;
-`endif
 
    // ----------------
    // DMem
@@ -247,10 +239,8 @@ module mkNear_Mem (Near_Mem_IFC);
    interface nmio_master = dtcm.nmio_master;
 `endif
 
-`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into DTCM
    interface dmem_dma_server = dtcm.dma_server;
-`endif
 
    // ----------------
    // Fence.I, Fence -- all fences are nops, right?
@@ -336,28 +326,18 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // No WData for the IMem. Dummy interface to the AXI4 adapter
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
-`ifdef INCLUDE_GDB_CONTROL
    // The TCM RAM - dual-ported due to backdoor to change IMem contents
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
       <- mkBRAMCore2BELoad (n_words_BRAM, config_output_register_BRAM, "itcm.hex", load_file_is_binary_BRAM);
-`else
-   BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
-      <- mkBRAMCore1BELoad (n_words_BRAM, config_output_register_BRAM, "itcm.hex", load_file_is_binary_BRAM);
-`endif
 
-`ifdef INCLUDE_GDB_CONTROL
    // The "front-door" to the itcm (port A)
    let irom = itcm.a;
-   // The "back-door" for system bus accesses to the itcm
-   let iram = itcm.b;
-`else
-   let irom = itcm;
-`endif
 
-`ifdef INCLUDE_GDB_CONTROL
+   // The "back-door" for direct memory accesses to the itcm
+   let iram = itcm.b;
+
    // Back-door access to the TCM RAM from the AXI4
    let dma_port <- mkTCM_DMA_AXI4_Adapter (iram, verbosity);
-`endif
 
    SoC_Map_IFC soc_map <- mkSoC_Map;
 
@@ -440,9 +420,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    method Action reset;
       rg_result_valid   <= False;
       rg_imem_state     <= MEM_IDLE;
-`ifdef INCLUDE_GDB_CONTROL
       dma_port.reset;
-`endif
 
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
@@ -484,10 +462,8 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // For accesses outside TCM (fabric memory)
    interface mem_master = dummy_imem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into ITCM
    interface dma_server = dma_port.dma_server;
-`endif
 
 endmodule: mkITCM
 
@@ -559,7 +535,8 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 `endif
       , f_mem_wdata, f_mem_rdata, verbosity_mmio);
 
-   // What fabric do we use -- AXI4 or AHBL. Select any one.
+   // What fabric do we use -- AXI4 or AHBL. Select any one, or both, but then you must 
+   // enable DUAL_FABRIC too
    Bit#(2) verbosity_fabric = 0;
 `ifdef FABRIC_AXI4
 `ifdef DUAL_FABRIC
@@ -588,11 +565,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    let dtcm_rd_port = dtcm.a;
    let dtcm_wr_port = dtcm.b;
 
-`ifdef INCLUDE_GDB_CONTROL
    // In addition to LD/ST, DMA/debug accesses need to be able to read and write from the
    // DTCM. Back-door debug/DMA access to the DTCM shares the 'b' port
    let dma_port <- mkTCM_DMA_AXI4_Adapter (dtcm_wr_port, verbosity);
-`endif
 
    // Continuous DTCM output
    let ram_out  = fn_extract_and_extend_bytes (rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
@@ -706,6 +681,11 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       endactionvalue
    endfunction 
 
+   // Compiler directives as NMIO and external requests (and responses) are mutually exclusive
+`ifdef DUAL_FABRIC
+   (* mutually_exclusive = "nmio_fabric_adapter_rl_read_data, fabric_adapter_rl_read_response" *)
+   (* mutually_exclusive = "nmio_fabric_adapter_rl_write_data, fabric_adapter_rl_write_response" *)
+`endif
 
    // --------
    // Process AMO ops
@@ -892,10 +872,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    method Action reset ();
       rg_result_valid <= False;
       rg_dmem_state <= MEM_IDLE;
-
-`ifdef INCLUDE_GDB_CONTROL
       dma_port.reset;
-`endif
 
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
@@ -948,10 +925,8 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // For accesses outside TCM (fabric memory, and memory-mapped I/O)
    interface mem_master = fabric_adapter.mem_master;
 
-`ifdef INCLUDE_GDB_CONTROL
    // Back-door from fabric into DTCM
    interface dma_server = dma_port.dma_server;
-`endif
 
    // ----------------------------------------------------------------
    // Misc. control and status
