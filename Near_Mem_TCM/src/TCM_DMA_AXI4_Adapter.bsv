@@ -42,7 +42,7 @@ import AXI4_Types       :: *;
 import Fabric_Defs      :: *;
 
 // ================================================================
-// Adapter converting AXI4 slave requests into commands to a RAM. 
+// Adapter converting AXI4 slave requests into commands to a RAM.
 // 'Server' downstream:
 // - a TCM RAM: requests/responses are for fabric-width only.
 
@@ -156,7 +156,7 @@ module mkTCM_DMA_AXI4_Adapter #(
 `elsif FABRIC64
       Bit#(Wd_Data) word = pack(ram.read);
 `endif
-      
+
       let rdr = AXI4_Rd_Data {
            rid  : rda.arid
          , rresp: axi4_resp_okay
@@ -206,7 +206,9 @@ module mkTCM_DMA_AXI4_Adapter #(
          (rg_state == STATE_READY)
       && (   (! wr_addr_valid)
           || (! wr_addr_aligned)
-          || (! wr_data_size_ok)));
+	                        ));
+//	  || (! wr_data_size_ok)));
+
 
       slave_xactor.o_wr_addr.deq;
       slave_xactor.o_wr_data.deq;
@@ -231,16 +233,18 @@ module mkTCM_DMA_AXI4_Adapter #(
          (rg_state == STATE_READY)
       && (wr_addr_valid)
       && (wr_addr_aligned)
-      && (wr_data_size_ok));
+			  );
+//      && (wr_data_size_ok));
 
       slave_xactor.o_wr_addr.deq;
       slave_xactor.o_wr_data.deq;
+      Bit #(Bytes_per_TCM_Word) strb = extend(slave_xactor.o_wr_data.first.wstrb);
 
       // Strobe generation
 `ifdef FABRIC32
-      Bit #(Bytes_per_TCM_Word) strobe = wr_lower_word ? 8'hf : 8'hf0; 
+      Bit #(Bytes_per_TCM_Word) strobe = wr_lower_word ? strb : (strb << 4);
 `elsif FABRIC64
-      Bit #(Bytes_per_TCM_Word) strobe = 8'hff;
+      Bit #(Bytes_per_TCM_Word) strobe = strb;
 `endif
 
       // Write data generation

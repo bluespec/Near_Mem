@@ -179,15 +179,15 @@ module mkNear_Mem (Near_Mem_IFC);
    //            1: Requests and responses
    //            2: rule firings
    //            3: + detail
-   Bit #(2) i_verbosity = 3;
-   Bit #(2) d_verbosity = 3;
+   Bit #(2) i_verbosity = 0;
+   Bit #(2) d_verbosity = 0;
 
    FIFOF #(Token) f_reset_rsps <- mkFIFOF1;
 
    // ----------------
    // The TCM instantiations
    let itcm <- mkITCM (i_verbosity);
-   let dtcm <- mkDTCM (d_verbosity); 
+   let dtcm <- mkDTCM (d_verbosity);
 
    // Fence request/response queues
    FIFOF #(Token) f_fence_req_rsp <- mkFIFOF1;
@@ -354,7 +354,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // This rule is basically the body of method ma_req; decoupling
    // through a wire affords scheduling flexibility.
    //
-   // Registers an incoming request and starts the TCM/MMIO probe 
+   // Registers an incoming request and starts the TCM/MMIO probe
    Wire #(IMem_Req) w_imem_req <- mkWire;
    (* fire_when_enabled *)
    rule rl_req;
@@ -522,7 +522,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 `endif
       , f_mem_wdata, f_mem_rdata, verbosity_mmio);
 
-   // What fabric do we use -- AXI4 or AHBL. Select any one, or both, but then you must 
+   // What fabric do we use -- AXI4 or AHBL. Select any one, or both, but then you must
    // enable DUAL_FABRIC too
    Bit#(2) verbosity_fabric = 0;
 `ifdef FABRIC_AXI4
@@ -601,7 +601,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 `endif
       endaction
    endfunction
-   
+
 
    // --------
 `ifdef ISA_A
@@ -629,7 +629,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
                rg_lrsc_valid <= False;
                lrsc_word64 = tagged Valid 1'h0;
             end
-            else begin 
+            else begin
                if (verbosity >= 1) begin
                   $display ("%0d: %m.fav_amo_write_to_ram: SC fail", cur_cycle);
                   $display ("      (va %08h) (data %016h)", rg_req.va, st_value);
@@ -666,7 +666,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
          return (lrsc_word64);
       endactionvalue
-   endfunction 
+   endfunction
 
    // Compiler directives as NMIO and external requests (and responses) are mutually exclusive
 `ifdef DUAL_FABRIC
@@ -753,7 +753,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // This rule is basically the body of method ma_req; decoupling
    // through a wire affords scheduling flexibility.
    //
-   // Registers an incoming request and starts the TCM/MMIO probe 
+   // Registers an incoming request and starts the TCM/MMIO probe
    // The only situation when the rl_req cannot fire is when the DMEM is in the AMO write phase
    Wire #(MMU_Cache_Req) w_dmem_req <- mkWire;
    (* fire_when_enabled *)
@@ -844,7 +844,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          rg_exc            <= False;
          rg_dmem_state     <= MEM_MMIO_RSP;
 `ifdef DUAL_FABRIC
-         // When two fabrics are present further decode is necessary to decide if the non 
+         // When two fabrics are present further decode is necessary to decide if the non
          // TCM address is meant for the internal (nmio) fabric or the external fabric
          let is_mem_req = !soc_map.m_is_nmio_addr (fabric_addr);
          f_is_mem_req.enq (is_mem_req);
