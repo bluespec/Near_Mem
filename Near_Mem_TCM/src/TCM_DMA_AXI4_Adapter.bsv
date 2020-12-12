@@ -53,7 +53,6 @@ import Fabric_Defs      :: *;
 // ================================================================
 // Fabric Port
 // Enables 'back-door' access of TCM by devices and debuggers.
-// Supports only word-size requests.
 
 interface TCM_DMA_AXI4_Adapter_IFC;
    // Reset
@@ -104,8 +103,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    let rd_byte_addr     = rda.araddr;
    let rd_ram_word_addr = ((rd_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
 
-   // XXX Is this check redundant because this device will only get requests meant for it, guaranteed by the fabric
-   // Bool rd_addr_valid   = soc_map.m_is_itcm_addr_1 (rd_byte_addr);
+   // Address range checks no longer done in this target. Relies on the fabric for it
    Bool rd_addr_valid   = True;
 
    Byte_in_TCM_Word rd_byte_in_tcm_word = rd_byte_addr [(bits_per_byte_in_tcm_word - 1) : 0];
@@ -184,8 +182,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    let wr_byte_addr     = wra.awaddr;
    let wr_ram_word_addr = ((wr_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
 
-   // XXX Is this check redundant because this device will only get requests meant for it, guaranteed by the fabric
-   // Bool wr_addr_valid   = soc_map.m_is_itcm_addr_2 (wr_byte_addr);
+   // Address range checks no longer done in this target. Relies on the fabric for it
    Bool wr_addr_valid   = True;
 
    Byte_in_TCM_Word wr_byte_in_tcm_word = wr_byte_addr [(bits_per_byte_in_tcm_word - 1) : 0];
@@ -199,16 +196,13 @@ module mkTCM_DMA_AXI4_Adapter #(
 `elsif FABRIC64
    Bool wr_addr_aligned = (wr_byte_in_tcm_word == 0);
 `endif
-   Bool wr_data_size_ok = (wrd.wstrb == '1);
 
-   // Invalid write address or data size: send error response
+   // Invalid write address alignment: send error response
    rule rl_bad_wr_addr (
          (rg_state == STATE_READY)
       && (   (! wr_addr_valid)
           || (! wr_addr_aligned)
-	                        ));
-//	  || (! wr_data_size_ok)));
-
+	 ));
 
       slave_xactor.o_wr_addr.deq;
       slave_xactor.o_wr_data.deq;
@@ -232,19 +226,15 @@ module mkTCM_DMA_AXI4_Adapter #(
    rule rl_wr_req (
          (rg_state == STATE_READY)
       && (wr_addr_valid)
-      && (wr_addr_aligned)
-			  );
-//      && (wr_data_size_ok));
+      && (wr_addr_aligned));
 
       slave_xactor.o_wr_addr.deq;
       slave_xactor.o_wr_data.deq;
-      Bit #(Bytes_per_TCM_Word) strb = extend(slave_xactor.o_wr_data.first.wstrb);
 
       // Strobe generation
+      Bit #(Bytes_per_TCM_Word) strb = extend(slave_xactor.o_wr_data.first.wstrb);
 `ifdef FABRIC32
-      Bit #(Bytes_per_TCM_Word) strobe = wr_lower_word ? strb : (strb << 4);
-`elsif FABRIC64
-      Bit #(Bytes_per_TCM_Word) strobe = strb;
+      strb = wr_lower_word ? strb : (strb << 4);
 `endif
 
       // Write data generation
@@ -256,7 +246,7 @@ module mkTCM_DMA_AXI4_Adapter #(
 `endif
 
       // Write word to ram
-      ram.put (strobe, fv_Fabric_Addr_to_Addr (wr_ram_word_addr), tcm_wdata);
+      ram.put (strb, fv_Fabric_Addr_to_Addr (wr_ram_word_addr), tcm_wdata);
 
       // Send response
       let wrr = AXI4_Wr_Resp {

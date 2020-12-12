@@ -668,12 +668,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       endactionvalue
    endfunction
 
-   // Compiler directives as NMIO and external requests (and responses) are mutually exclusive
-`ifdef DUAL_FABRIC
-   (* mutually_exclusive = "nmio_fabric_adapter_rl_read_data, fabric_adapter_rl_read_response" *)
-   (* mutually_exclusive = "nmio_fabric_adapter_rl_write_data, fabric_adapter_rl_write_response" *)
-`endif
-
    // --------
    // Process AMO ops
    rule rl_amo_rsp (rg_dmem_state == MEM_AMO_RSP);
@@ -750,12 +744,28 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
             ,cur_cycle, ld_val, final_st_val);
    endrule
 
-   // This rule is basically the body of method ma_req; decoupling
-   // through a wire affords scheduling flexibility.
+   Wire #(MMU_Cache_Req) w_dmem_req <- mkWire;
+
+   // --------
+   // Compiler directives
+   // NMIO and external requests (and responses) are mutually exclusive
+`ifdef DUAL_FABRIC
+   (* mutually_exclusive = "nmio_fabric_adapter_rl_read_data, fabric_adapter_rl_read_response" *)
+   (* mutually_exclusive = "nmio_fabric_adapter_rl_write_data, fabric_adapter_rl_write_response" *)
+`endif
+
+   // DMA accesses and CPU accesses should be mutually exclusive (especially for writes)
+   (* mutually_exclusive = "dma_port_rl_wr_req, rl_amo_rsp" *)
+   (* mutually_exclusive = "dma_port_rl_rd_req, rl_amo_rsp" *)
+   (* mutually_exclusive = "dma_port_rl_rd_req, rl_req" *)
+   (* mutually_exclusive = "dma_port_rl_wr_req, rl_req" *)
+
+   // --------
+   // This rule is the body of method ma_req; decoupling through a wire affords scheduling
+   // flexibility.
    //
    // Registers an incoming request and starts the TCM/MMIO probe
    // The only situation when the rl_req cannot fire is when the DMEM is in the AMO write phase
-   Wire #(MMU_Cache_Req) w_dmem_req <- mkWire;
    (* fire_when_enabled *)
 `ifdef ISA_A
    rule rl_req (rg_dmem_state != MEM_AMO_RSP);
