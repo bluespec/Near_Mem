@@ -46,6 +46,7 @@
 // specific sub-test within the test failed.
 //
 // This logic is not meant to be included in the synthesizable version.
+// The tohost check is independent of other address checks.
 // ----------------
 
 
@@ -294,8 +295,8 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    //            1: Requests and responses
    //            2: rule firings
    //            3: + detail
-   Bit#(2) verbosity_mmio = 3;
-   Bit#(2) verbosity_axi4 = 3;
+   Bit#(2) verbosity_mmio = verbosity;
+   Bit#(2) verbosity_axi4 = verbosity;
 
    // Module state
    Reg #(Mem_State) rg_imem_state   <- mkReg (MEM_IDLE);
@@ -498,7 +499,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // "tohost" addr on which to monitor writes, for standard ISA tests.
    // These are set by the 'set_watch_tohost' method but are otherwise read-only.
    Reg #(Bool)                rg_watch_tohost   <- mkReg (False);
-   Reg #(Bit #(64))           rg_tohost_addr    <- mkReg ('h_8000_1000);
+   Reg #(Bit #(64))           rg_tohost_addr    <- mkRegU;
    Reg #(Bit #(64))           rg_tohost_value   <- mkReg (0);
 `endif
 
@@ -583,22 +584,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       // XXX is this even used by the CPU?
       // dw_final_st_val <= extend (ram_st_value);
 
-`ifdef WATCH_TOHOST
-      // ----------------
-      // "tohost" addr on which to monitor writes, for standard ISA tests.
-      // See NOTE: "tohost" above.
-      if (  (rg_watch_tohost)
-         && (req.op == CACHE_ST)
-         && (zeroExtend (req.va) == rg_tohost_addr)
-         && (ram_st_value != 0)) begin
-         rg_tohost_value <= ram_st_value;
-         let test_num = (ram_st_value >> 1);
-         $display ("%0d: %m.fa_watch_tohost", cur_cycle);
-         if (test_num == 0) $write ("    PASS");
-         else               $write ("    FAIL <test_%0d>", test_num);
-         $display ("  (<tohost>  addr %08h  data %08h)", req.va, ram_st_value);
-      end
-`endif
       endaction
    endfunction
 
@@ -781,6 +766,24 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       let amo_funct7 = dmem_req.amo_funct7;
 `endif
 
+`ifdef WATCH_TOHOST
+      // ----------------
+      // "tohost" addr on which to monitor writes, for standard ISA tests.
+      // See NOTE: "tohost" above. This check is a testbench feature and is independent of the
+      // address check for the request.
+      if (  (rg_watch_tohost)
+         && (op == CACHE_ST)
+         && (zeroExtend (addr) == rg_tohost_addr)
+         && (st_value != 0)) begin
+         rg_tohost_value <= st_value;
+         let test_num = (st_value >> 1);
+         $display ("%0d: %m.watch_tohost", cur_cycle);
+         if (test_num == 0) $write ("    PASS");
+         else               $write ("    FAIL <test_%0d>", test_num);
+         $display ("  (<tohost>  addr %08h  data %08h)", addr, st_value);
+      end
+`endif
+
       // Note: ignoring all VM args for this version of Near_Mem_TCM
       if (verbosity > 1)
          $display ("%0d: %m.rl_req: ", cur_cycle, show_CPU_req (op, f3, addr, st_value));
@@ -860,6 +863,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          f_is_mem_req.enq (is_mem_req);
 `endif
          mmio.start;
+
       end
    endrule
 
@@ -870,6 +874,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       rg_result_valid <= False;
       rg_dmem_state <= MEM_IDLE;
       dma_port.reset;
+`ifdef WATCH_TOHOST
+      rg_tohost_value <= 0;
+`endif
 
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
