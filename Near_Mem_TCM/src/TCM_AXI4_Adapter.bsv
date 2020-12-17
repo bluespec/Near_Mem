@@ -63,16 +63,6 @@ interface TCM_AXI4_Adapter_IFC;
    // Fabric master interface
    interface AXI4_Master_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) mem_master;
 
-   // ----------------------------------------------------------------
-   // Misc. control and status
-
-   // Signal that DDR4 has been initialized and is ready to accept requests
-   method Action ma_ddr4_ready;
-
-   // Misc. status; 0 = running, no error
-   (* always_ready *)
-   method Bit #(8) mv_status;
-
 endinterface
 
 // ================================================================
@@ -110,8 +100,6 @@ module mkTCM_AXI4_Adapter #(
    // Limit the number of reads/writes outstanding to 15
    // TODO: change these to concurrent up/down counters?
    Reg #(Bool) rg_wr_rsps_pending <- mkReg (False);
-
-   Reg #(Bool) rg_ddr4_ready <- mkReg (False);
 
    // Record errors on write-responses from mem
    Reg #(Bool) rg_write_error <- mkReg (False);
@@ -206,7 +194,6 @@ module mkTCM_AXI4_Adapter #(
    // BEHAVIOR: Single read requests (not a burst)
 
    rule rl_single_read_req (f_single_reqs.first.is_read
-			    && rg_ddr4_ready
 			    && (!rg_wr_rsps_pending));
       let         req        <- pop (f_single_reqs);
       Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (req.addr);
@@ -298,7 +285,7 @@ module mkTCM_AXI4_Adapter #(
    // Former is 2 x latter for Fabric32 for 64b line data and 64b single data.
    Reg #(Bit #(8)) rg_wr_beat <- mkReg (0);
 
-   rule rl_write_data (rg_ddr4_ready && (rg_wr_beat < wr_req_beats));
+   rule rl_write_data ((rg_wr_beat < wr_req_beats));
       Bool last = (rg_wr_beat == (wr_req_beats - 1));
       if (last) begin
 	 f_wr_data_control.deq;
@@ -367,7 +354,6 @@ module mkTCM_AXI4_Adapter #(
    // BEHAVIOR: Single write requests (not a burst)
 
    rule rl_single_write_req ((! f_single_reqs.first.is_read)
-			     && rg_ddr4_ready
 			     && (!rg_wr_rsps_pending));
       let req <- pop (f_single_reqs);
 
@@ -428,20 +414,6 @@ module mkTCM_AXI4_Adapter #(
    // ----------------
    // Fabric master interface
    interface mem_master = master_xactor.axi_side;
-
-   // ----------------------------------------------------------------
-   // Misc. control and status
-
-   // Signal that DDR4 has been initialized and is ready to accept requests
-   method Action ma_ddr4_ready;
-      rg_ddr4_ready <= True;
-      $display ("%0d: %m.ma_ddr4_ready: Enabling memory accesses", cur_cycle);
-   endmethod
-
-   // Misc. status; 0 = running, no error
-   method Bit #(8) mv_status;
-      return (rg_write_error ? 1 : 0);
-   endmethod
 
 endmodule
 

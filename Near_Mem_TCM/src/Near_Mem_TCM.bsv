@@ -513,7 +513,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    FIFOF #(Read_Data)         f_mem_rdata       <- mkFIFOF1;
 
    // Access to fabric for non-TCM requests
-   Bit#(2) verbosity_mmio = 0;
+   Bit#(2) verbosity_mmio = verbosity;
    DMMIO_IFC                  mmio              <- mkDMMIO (
         rg_req
       , f_mem_req
@@ -525,7 +525,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
    // What fabric do we use -- AXI4 or AHBL. Select any one, or both, but then you must
    // enable DUAL_FABRIC too
-   Bit#(2) verbosity_fabric = 0;
+   Bit#(2) verbosity_fabric = verbosity;
 `ifdef FABRIC_AXI4
 `ifdef DUAL_FABRIC
    TCM_AXI4_Adapter_IFC nmio_fabric_adapter<- mkTCM_AXI4_Adapter (
