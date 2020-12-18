@@ -323,7 +323,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 
    // The TCM RAM - dual-ported due to backdoor to change IMem contents
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) itcm
-      <- mkBRAMCore2BELoad (n_words_BRAM, config_output_register_BRAM, "itcm.hex", load_file_is_binary_BRAM);
+      <- mkBRAMCore2BELoad (n_words_BRAM, config_output_register_BRAM, "/tmp/e342zni.hex", load_file_is_binary_BRAM);
 
    // The "front-door" to the itcm (port A)
    let irom = itcm.a;
@@ -548,7 +548,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // processor, it is possible to work with a single-ported BRAM while sacrificing
    // concurrency between the response and request phases.
    BRAM_DUAL_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (
-      n_words_BRAM, config_output_register_BRAM, "dtcm.hex", load_file_is_binary_BRAM);
+      n_words_BRAM, config_output_register_BRAM, "/tmp/e342znd.hex", load_file_is_binary_BRAM);
 
    let dtcm_rd_port = dtcm.a;
    let dtcm_wr_port = dtcm.b;
