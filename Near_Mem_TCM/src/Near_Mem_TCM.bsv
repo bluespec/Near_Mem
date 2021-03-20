@@ -950,8 +950,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    method Action set_watch_tohost (Bool watch_tohost, Bit #(64) tohost_addr);
       rg_watch_tohost <= watch_tohost;
       rg_tohost_addr  <= tohost_addr;
-      $display ("%0d: %m.set_watch_tohost: watch %0d, addr %08h",
-                cur_cycle, watch_tohost, tohost_addr);
+      if (verbosity > 0)
+	 $display ("%0d: %m.set_watch_tohost: watch %0d, addr %08h",
+		   cur_cycle, watch_tohost, tohost_addr);
    endmethod
 
    method Bit #(64) mv_tohost_value;
