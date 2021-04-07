@@ -70,8 +70,11 @@ typedef enum {STATE_READY,
 
 // ----------------------------------------------------------------
 module mkTCM_DMA_AXI4_Adapter #(
-     BRAM_PORT_BE #(Addr, TCM_Word, Bytes_per_TCM_Word) ram
-   , Bit #(2)                                           verbosity) (TCM_DMA_AXI4_Adapter_IFC);
+     BRAM_PORT_BE #(tcm_addr, TCM_Word, Bytes_per_TCM_Word) ram
+   , Bit #(2)                                           verbosity) (TCM_DMA_AXI4_Adapter_IFC)
+
+   provisos (Alias #(tcm_addr, Bit #(sz)),
+	     Add #(sz, _1, Wd_Addr));
 
    // Module state
    Reg #(State) rg_state <- mkReg (STATE_READY);
@@ -101,7 +104,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    // The head of the read request queue, and some functions on it
    let rda              = slave_xactor.o_rd_addr.first;
    let rd_byte_addr     = rda.araddr;
-   let rd_ram_word_addr = ((rd_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
+   let rd_ram_word_addr = truncate((rd_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
 
    // Address range checks no longer done in this target. Relies on the fabric for it
    Bool rd_addr_valid   = True;
@@ -139,7 +142,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    // Legal, well-formed read requests: initiate RAM read
    rule rl_rd_req ((rg_state == STATE_READY) && rd_addr_valid && rd_addr_aligned);
       // Initiate word read from ram
-      ram.put (0, fv_Fabric_Addr_to_Addr (rd_ram_word_addr), ?);
+      ram.put (0, truncate(fv_Fabric_Addr_to_Addr (rd_ram_word_addr)), ?);
       rg_state <= STATE_READ_RESPONDING;
 
       if (verbosity > 1)
@@ -180,7 +183,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    let wrd = slave_xactor.o_wr_data.first;
 
    let wr_byte_addr     = wra.awaddr;
-   let wr_ram_word_addr = ((wr_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
+   let wr_ram_word_addr = truncate((wr_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
 
    // Address range checks no longer done in this target. Relies on the fabric for it
    Bool wr_addr_valid   = True;
@@ -246,7 +249,7 @@ module mkTCM_DMA_AXI4_Adapter #(
 `endif
 
       // Write word to ram
-      ram.put (strb, fv_Fabric_Addr_to_Addr (wr_ram_word_addr), tcm_wdata);
+      ram.put (strb, truncate(fv_Fabric_Addr_to_Addr (wr_ram_word_addr)), tcm_wdata);
 
       // Send response
       let wrr = AXI4_Wr_Resp {

@@ -322,7 +322,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
    // The TCM RAM - dual-ported due to backdoor to change IMem contents
-   BRAM_DUAL_PORT_BE #(Addr
+   BRAM_DUAL_PORT_BE #(ITCM_ADDR
                      , TCM_Word
                      , Bytes_per_TCM_Word) itcm <- mkBRAMCore2BELoad (n_words_IBRAM
                                                                     , config_output_register_BRAM
@@ -398,7 +398,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
          // Initiate RAM read
          Addr word_addr = fv_Fabric_Addr_to_Addr (
             (fabric_pc - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
-         irom.put (0, word_addr, ?);
+         irom.put (0, truncate(word_addr), ?);
       end
 
       // outside TCM address space -- respond with an access fault
@@ -551,7 +551,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // rl_req have not been written to be mutually exclusive. For a non-pipelined
    // processor, it is possible to work with a single-ported BRAM while sacrificing
    // concurrency between the response and request phases.
-   BRAM_DUAL_PORT_BE #(Addr
+   BRAM_DUAL_PORT_BE #(DTCM_ADDR
                      , TCM_Word
                      , Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (n_words_DBRAM
                                                                     , config_output_register_BRAM
@@ -580,17 +580,17 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // This function writes to the TCM RAM
    function Action fa_write_to_ram (Addr tcm_byte_addr, MMU_Cache_Req req, Bit #(64) st_value);
       action
-      match {.byte_en, .ram_st_value} = fn_byte_adjust_write (req.f3, tcm_byte_addr, st_value);
-      Addr tcm_word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
+	 match {.byte_en, .ram_st_value} = fn_byte_adjust_write (req.f3, tcm_byte_addr, st_value);
+	 DTCM_ADDR tcm_word_addr = truncate(tcm_byte_addr >> bits_per_byte_in_tcm_word);
 
-      if (verbosity >= 1)
-         $display ("      (RAM byte_en %08b) (RAM addr %08h) (RAM data %016h)"
-            , byte_en, tcm_word_addr, ram_st_value);
+	 if (verbosity >= 1)
+            $display ("      (RAM byte_en %08b) (RAM addr %08h) (RAM data %016h)"
+               , byte_en, tcm_word_addr, ram_st_value);
 
-      dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
+	 dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
 
-      // XXX is this even used by the CPU?
-      // dw_final_st_val <= extend (ram_st_value);
+	 // XXX is this even used by the CPU?
+	 // dw_final_st_val <= extend (ram_st_value);
 
       endaction
    endfunction
@@ -789,6 +789,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          if (test_num == 0) $write ("    PASS");
          else               $write ("    FAIL <test_%0d>", test_num);
          $display ("  (<tohost>  addr %08h  data %08h)", addr, st_value);
+	 $finish(0);
       end
 `endif
 
@@ -836,7 +837,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
          else begin
             let word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
-            dtcm_rd_port.put (0, word_addr, ?);
+            dtcm_rd_port.put (0, truncate(word_addr), ?);
             if (verbosity >= 2)
                $display ("   dtcm_rd_port.put (word_addr %08h)", word_addr);
          end

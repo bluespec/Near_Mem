@@ -21,11 +21,17 @@ function  Byte_in_TCM_Word fn_addr_to_byte_in_tcm_word (Addr a);
    return a [addr_hi_byte_in_tcm_word : addr_lo_byte_in_tcm_word ];
 endfunction
 
+typedef 64 KB_PER_ITCM;
+typedef 32 KB_PER_DTCM;
+
 // TCM Sizing - separate sizing for I and D TCMs
-Integer kB_per_ITCM = 'h40;     // 64KB
-Integer kB_per_DTCM = 'h20;     // 32KB
+Integer kB_per_ITCM = valueOf (KB_PER_ITCM);     // 64KB
+Integer kB_per_DTCM = valueOf (KB_PER_DTCM);     // 32KB
 Integer bytes_per_ITCM = kB_per_ITCM * 'h400;
 Integer bytes_per_DTCM = kB_per_DTCM * 'h400;
+
+typedef Bit #(TAdd #(TLog #(KB_PER_ITCM), 7))    ITCM_ADDR;  // KB * 1024 / bytes_per_tcm_word
+typedef Bit #(TAdd #(TLog #(KB_PER_DTCM), 7))    DTCM_ADDR;  // KB * 1024 / bytes_per_tcm_word
 
 // size of the BRAM in TCM_Word(s). the addition of the extra term is to prevent rounding down
 // in case bytes_per_word is not a power of two.
@@ -33,4 +39,3 @@ Integer n_words_IBRAM = ((bytes_per_ITCM + bytes_per_tcm_word - 1) / bytes_per_t
 Integer n_words_DBRAM = ((bytes_per_DTCM + bytes_per_tcm_word - 1) / bytes_per_tcm_word);
 
 endpackage
-
