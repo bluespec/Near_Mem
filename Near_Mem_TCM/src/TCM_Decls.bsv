@@ -30,12 +30,19 @@ Integer kB_per_DTCM = valueOf (KB_PER_DTCM);     // 32KB
 Integer bytes_per_ITCM = kB_per_ITCM * 'h400;
 Integer bytes_per_DTCM = kB_per_DTCM * 'h400;
 
-typedef Bit #(TAdd #(TLog #(KB_PER_ITCM), 7))    ITCM_ADDR;  // KB * 1024 / bytes_per_tcm_word
-typedef Bit #(TAdd #(TLog #(KB_PER_DTCM), 7))    DTCM_ADDR;  // KB * 1024 / bytes_per_tcm_word
+// LSBs to address a byte in the TCMs
+typedef TAdd# (TLog# (KB_PER_ITCM), TLog #(1024)) ITCM_Addr_LSB;
+Integer itcm_addr_lsb = valueOf (ITCM_Addr_LSB);
+typedef TAdd# (TLog# (KB_PER_DTCM), TLog #(1024)) DTCM_Addr_LSB;
+Integer dtcm_addr_lsb = valueOf (DTCM_Addr_LSB);
+
+// Indices into the ITCM and DTCM (TCM word aligned)
+typedef Bit #(TAdd #(TLog #(KB_PER_ITCM), 7))    ITCM_INDEX;  // KB * 1024 / bytes_per_tcm_word
+typedef Bit #(TAdd #(TLog #(KB_PER_DTCM), 7))    DTCM_INDEX;  // KB * 1024 / bytes_per_tcm_word
 
 // size of the BRAM in TCM_Word(s). the addition of the extra term is to prevent rounding down
 // in case bytes_per_word is not a power of two.
-Integer n_words_IBRAM = ((bytes_per_ITCM + bytes_per_tcm_word - 1) / bytes_per_tcm_word);
-Integer n_words_DBRAM = ((bytes_per_DTCM + bytes_per_tcm_word - 1) / bytes_per_tcm_word);
+Integer n_words_IBRAM = (bytes_per_ITCM / bytes_per_tcm_word);
+Integer n_words_DBRAM = (bytes_per_DTCM / bytes_per_tcm_word);
 
 endpackage

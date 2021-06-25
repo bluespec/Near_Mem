@@ -322,7 +322,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
    // The TCM RAM - dual-ported due to backdoor to change IMem contents
-   BRAM_DUAL_PORT_BE #(ITCM_ADDR
+   BRAM_DUAL_PORT_BE #(ITCM_INDEX
                      , TCM_Word
                      , Bytes_per_TCM_Word) itcm <- mkBRAMCore2BELoad (n_words_IBRAM
                                                                     , config_output_register_BRAM
@@ -396,8 +396,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
          rg_imem_state     <= MEM_TCM_RSP;
 
          // Initiate RAM read
-         Addr word_addr = fv_Fabric_Addr_to_Addr (
-            (fabric_pc - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
+         ITCM_INDEX word_addr = truncate (pc >> bits_per_byte_in_tcm_word);
          irom.put (0, truncate(word_addr), ?);
       end
 
@@ -551,7 +550,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // rl_req have not been written to be mutually exclusive. For a non-pipelined
    // processor, it is possible to work with a single-ported BRAM while sacrificing
    // concurrency between the response and request phases.
-   BRAM_DUAL_PORT_BE #(DTCM_ADDR
+   BRAM_DUAL_PORT_BE #(DTCM_INDEX
                      , TCM_Word
                      , Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (n_words_DBRAM
                                                                     , config_output_register_BRAM
@@ -578,16 +577,18 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // ----------------------------------------------------------------
    // BEHAVIOR
    // This function writes to the TCM RAM
-   function Action fa_write_to_ram (Addr tcm_byte_addr, MMU_Cache_Req req, Bit #(64) st_value);
+   function Action fa_write_to_ram (
+      Addr byte_addr, MMU_Cache_Req req, Bit #(64) st_value);
       action
-	 match {.byte_en, .ram_st_value} = fn_byte_adjust_write (req.f3, tcm_byte_addr, st_value);
-	 DTCM_ADDR tcm_word_addr = truncate(tcm_byte_addr >> bits_per_byte_in_tcm_word);
+	 match {.byte_en, .ram_st_value} = fn_byte_adjust_write (
+            req.f3, byte_addr, st_value);
+	 DTCM_INDEX word_addr = truncate(byte_addr >> bits_per_byte_in_tcm_word);
 
 	 if (verbosity >= 1)
             $display ("      (RAM byte_en %08b) (RAM addr %08h) (RAM data %016h)"
-               , byte_en, tcm_word_addr, ram_st_value);
+               , byte_en, word_addr, ram_st_value);
 
-	 dtcm_wr_port.put (byte_en, tcm_word_addr, ram_st_value);
+	 dtcm_wr_port.put (byte_en, word_addr, ram_st_value);
 
 	 // XXX is this even used by the CPU?
 	 // dw_final_st_val <= extend (ram_st_value);
@@ -604,8 +605,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // a valid value for the word64 method
    function ActionValue #(Maybe #(Bit #(1))) fav_amo_write_to_ram (Bit #(64) ram_data);
       actionvalue
-         Fabric_Addr fabric_va = fv_Addr_to_Fabric_Addr (rg_req.va);
-         Addr tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_va - soc_map.m_dtcm_addr_base);
+         Addr byte_addr = rg_req.va;
          let st_value  = rg_req.st_value;
          let f3        = rg_req.f3;
          Maybe #(Bit #(1)) lrsc_word64 = tagged Invalid;
@@ -655,7 +655,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
             if (rg_lrsc_pa == rg_req.va) rg_lrsc_valid <= False;
          end
 
-         if (! sc_fail) fa_write_to_ram (tcm_byte_addr, rg_req, st_value);
+         if (! sc_fail) fa_write_to_ram (byte_addr, rg_req, st_value);
 
          return (lrsc_word64);
       endactionvalue
@@ -804,7 +804,6 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 
       // for all the checks relating to the soc-map
       Fabric_Addr fabric_addr = fv_Addr_to_Fabric_Addr (addr);
-      let tcm_byte_addr = fv_Fabric_Addr_to_Addr (fabric_addr - soc_map.m_dtcm_addr_base);
 
       // Check if f3 is legal, and if f3 and addr are compatible
       let addr_is_aligned = fn_is_aligned (f3 [1:0], addr);
@@ -827,7 +826,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          // The read/write to the RAM is initiated here. If it is a
          // AMO store, the actual write happens in the AMO phase
          if (op == CACHE_ST) begin
-            fa_write_to_ram (tcm_byte_addr, dmem_req, st_value);
+            fa_write_to_ram (addr, dmem_req, st_value);
 `ifdef ISA_A
             // Cancel LR/SC reservation if this store is for the reserved addr
             // TODO : should we cancel it on ANY store?
@@ -836,7 +835,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
          end
 
          else begin
-            let word_addr = (tcm_byte_addr >> bits_per_byte_in_tcm_word);
+            let word_addr = (addr >> bits_per_byte_in_tcm_word);
             dtcm_rd_port.put (0, truncate(word_addr), ?);
             if (verbosity >= 2)
                $display ("   dtcm_rd_port.put (word_addr %08h)", word_addr);
