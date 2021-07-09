@@ -321,6 +321,13 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    // No WData for the IMem. Dummy interface to the AXI4 adapter
    FIFOF #(Bit #(64))  f_mem_wdata  = dummy_FIFOF;
 
+`ifdef MICROSEMI
+   // The TCM RAM - dual-ported due to backdoor to change IMem contents
+   BRAM_DUAL_PORT_BE #(ITCM_INDEX
+                     , TCM_Word
+                     , Bytes_per_TCM_Word) itcm <- mkBRAMCore2BE (n_words_IBRAM
+                                                                , config_output_register_BRAM);
+`else
    // The TCM RAM - dual-ported due to backdoor to change IMem contents
    BRAM_DUAL_PORT_BE #(ITCM_INDEX
                      , TCM_Word
@@ -328,6 +335,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
                                                                     , config_output_register_BRAM
                                                                     , "/tmp/e342zni.hex"
                                                                     , load_file_is_binary_BRAM);
+`endif
 
    // The "front-door" to the itcm (port A)
    let irom = itcm.a;
@@ -550,12 +558,19 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // rl_req have not been written to be mutually exclusive. For a non-pipelined
    // processor, it is possible to work with a single-ported BRAM while sacrificing
    // concurrency between the response and request phases.
+`ifdef MICROSEMI
+   BRAM_DUAL_PORT_BE #(DTCM_INDEX
+                     , TCM_Word
+                     , Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BE (n_words_DBRAM
+                                                                , config_output_register_BRAM);
+`else
    BRAM_DUAL_PORT_BE #(DTCM_INDEX
                      , TCM_Word
                      , Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (n_words_DBRAM
                                                                     , config_output_register_BRAM
                                                                     , "/tmp/e342znd.hex"
                                                                     , load_file_is_binary_BRAM);
+`endif
 
    let dtcm_rd_port = dtcm.a;
    let dtcm_wr_port = dtcm.b;
