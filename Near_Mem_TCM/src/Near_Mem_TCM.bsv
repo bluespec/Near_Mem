@@ -81,6 +81,7 @@ import MMU_Cache_Common :: *;
 import MMIO             :: *;
 
 import TCM_DMA_AXI4_Adapter :: *;
+import AXI4_Deburster   :: *;
 
 `ifdef FABRIC_AXI4
 import TCM_AXI4_Adapter :: *;
@@ -345,6 +346,9 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
 
    // Back-door access to the TCM RAM from the AXI4
    let dma_port <- mkTCM_DMA_AXI4_Adapter (iram, verbosity);
+   AXI4_Deburster_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) deburstr <- mkAXI4_Deburster;
+   mkConnection (deburstr.to_slave, dma_port.dma_server);
+   let dma_port_extnl = deburstr.from_master;
 
    SoC_Map_IFC soc_map <- mkSoC_Map;
 
@@ -424,6 +428,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
       rg_result_valid   <= False;
       rg_imem_state     <= MEM_IDLE;
       dma_port.reset;
+      deburstr.reset;
 
       if (verbosity > 1)
          $display ("%0d: %m.reset", cur_cycle);
@@ -462,7 +467,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
    endinterface
 
    // Back-door from fabric into ITCM
-   interface dma_server = dma_port.dma_server;
+   interface dma_server = dma_port_extnl;
 
 endmodule: mkITCM
 
@@ -578,6 +583,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    // In addition to LD/ST, DMA/debug accesses need to be able to read and write from the
    // DTCM. Back-door debug/DMA access to the DTCM shares the 'b' port
    let dma_port <- mkTCM_DMA_AXI4_Adapter (dtcm_wr_port, verbosity);
+   AXI4_Deburster_IFC #(Wd_Id, Wd_Addr, Wd_Data, Wd_User) deburstr <- mkAXI4_Deburster;
+   mkConnection (deburstr.to_slave, dma_port.dma_server);
+   let dma_port_extnl = deburstr.from_master;
 
    // Continuous DTCM output
    let ram_out  = fn_extract_and_extend_bytes (rg_req.f3, rg_req.va, pack (dtcm_rd_port.read));
@@ -897,6 +905,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       rg_result_valid <= False;
       rg_dmem_state <= MEM_IDLE;
       dma_port.reset;
+      deburstr.reset;
 `ifdef WATCH_TOHOST
       rg_tohost_value <= 0;
 `endif
@@ -953,7 +962,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    interface mem_master = fabric_adapter.mem_master;
 
    // Back-door from fabric into DTCM
-   interface dma_server = dma_port.dma_server;
+   interface dma_server = dma_port_extnl;
 
    // ----------------------------------------------------------------
    // Misc. control and status
