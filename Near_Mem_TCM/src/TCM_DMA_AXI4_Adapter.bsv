@@ -71,7 +71,7 @@ typedef enum {STATE_READY,
 // ----------------------------------------------------------------
 module mkTCM_DMA_AXI4_Adapter #(
      BRAM_PORT_BE #(tcm_addr, TCM_Word, Bytes_per_TCM_Word) ram
-   , Bit #(2)                                           verbosity) (TCM_DMA_AXI4_Adapter_IFC)
+   , Bit #(2) verbosity) (TCM_DMA_AXI4_Adapter_IFC)
 
    provisos (Alias #(tcm_addr, Bit #(sz)),
 	     Add #(sz, _1, Wd_Addr));
@@ -104,7 +104,8 @@ module mkTCM_DMA_AXI4_Adapter #(
    // The head of the read request queue, and some functions on it
    let rda              = slave_xactor.o_rd_addr.first;
    let rd_byte_addr     = rda.araddr;
-   let rd_ram_word_addr = truncate((rd_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
+   tcm_addr rd_ram_word_addr = truncate (
+      fv_Fabric_Addr_to_Addr (rd_byte_addr) >> bits_per_byte_in_tcm_word);
 
    // Address range checks no longer done in this target. Relies on the fabric for it
    Bool rd_addr_valid   = True;
@@ -113,12 +114,21 @@ module mkTCM_DMA_AXI4_Adapter #(
 
    // Check alignment
 `ifdef FABRIC32
+`ifdef NM32
+   Bool rd_addr_aligned = (rd_byte_in_tcm_word == 0);
+`else
    Bool rd_addr_aligned = (
          (rd_byte_in_tcm_word == 0)
       || (rd_byte_in_tcm_word == 4));
    Bool rd_lower_word = (rd_byte_in_tcm_word == 0);
+`endif
 `elsif FABRIC64
+`ifdef NM32
    Bool rd_addr_aligned = (rd_byte_in_tcm_word == 0);
+   Bool rd_upper_word = (rg_byte_addr [bits_per_byte_in_tcm_word] == 1'b1);
+`else
+   Bool rd_addr_aligned = (rd_byte_in_tcm_word == 0);
+`endif
 `endif
 
    // Invalid read address: send error response
@@ -140,22 +150,40 @@ module mkTCM_DMA_AXI4_Adapter #(
    endrule
 
    // Legal, well-formed read requests: initiate RAM read
-   rule rl_rd_req ((rg_state == STATE_READY) && rd_addr_valid && rd_addr_aligned);
+   rule rl_dma_rd_req ((rg_state == STATE_READY) && rd_addr_valid && rd_addr_aligned);
+`ifdef FABRIC64
+`ifdef NM32
+      // Adjust RAM address to read the upper word
+      if (rd_upper_word) rd_ram_word_addr = rd_ram_word_addr + 1;
+`endif
+`endif
       // Initiate word read from ram
-      ram.put (0, truncate(fv_Fabric_Addr_to_Addr (rd_ram_word_addr)), ?);
+      ram.put (0, rd_ram_word_addr, ?);
       rg_state <= STATE_READ_RESPONDING;
-
-      if (verbosity > 1)
-         $display ("%0d: %m.rl_rd_req: addr 0x%0h", cur_cycle, rd_byte_addr);
+ 
+      if (verbosity > 1) begin
+         $display ("%0d: %m.rl_dma_rd_req", cur_cycle);
+         $display ("    ", fshow (rda));
+         $display ("    (ram_addr : %0h", rd_ram_word_addr);
+      end
    endrule
 
    // Read responses: get word from RAM and respond
-   rule rl_rd_rsp (rg_state == STATE_READ_RESPONDING);
+   rule rl_dma_rd_rsp (rg_state == STATE_READ_RESPONDING);
 `ifdef FABRIC32
+`ifdef NM32
+      Bit#(Wd_Data) word = pack (ram.read);
+`else
       let words = pack (ram.read);
       Bit#(Wd_Data) word = rd_lower_word ? words[31:0] : words [63:32];
+`endif
 `elsif FABRIC64
+`ifdef NM32
+      let words = pack (ram.read);
+      Bit#(Wd_Data) word = {words, words};
+`else
       Bit#(Wd_Data) word = pack(ram.read);
+`endif
 `endif
 
       let rdr = AXI4_Rd_Data {
@@ -169,9 +197,11 @@ module mkTCM_DMA_AXI4_Adapter #(
       slave_xactor.o_rd_addr.deq;
       rg_state <= STATE_READY;
 
-      if (verbosity > 1)
-         $display ("%0d: %m.rl_rd_rsp: addr 0x%0h => data 0x%0h",
-                   cur_cycle, rd_byte_addr, word);
+      if (verbosity > 1) begin
+         $display ("%0d: %m.rl_dma_rd_rsp", cur_cycle);
+         $display ("    ", fshow (rda));
+         $display ("    ", fshow (rdr));
+      end
    endrule
 
    // ----------------------------------------------------------------
@@ -183,21 +213,32 @@ module mkTCM_DMA_AXI4_Adapter #(
    let wrd = slave_xactor.o_wr_data.first;
 
    let wr_byte_addr     = wra.awaddr;
-   let wr_ram_word_addr = truncate((wr_byte_addr - soc_map.m_itcm_addr_base) >> bits_per_byte_in_tcm_word);
+   tcm_addr wr_ram_word_addr = truncate (
+      fv_Fabric_Addr_to_Addr (wr_byte_addr) >> bits_per_byte_in_tcm_word);
 
-   // Address range checks no longer done in this target. Relies on the fabric for it
+   // Address range checks no longer done in this target. Relies on
+   // the fabric for it
    Bool wr_addr_valid   = True;
 
    Byte_in_TCM_Word wr_byte_in_tcm_word = wr_byte_addr [(bits_per_byte_in_tcm_word - 1) : 0];
 
    // Check alignment and strobe
 `ifdef FABRIC32
+`ifdef NM32
+   Bool wr_addr_aligned = (wr_byte_in_tcm_word == 0);
+`else
    Bool wr_addr_aligned = (
          (wr_byte_in_tcm_word == 0)
       || (wr_byte_in_tcm_word == 4));
    Bool wr_lower_word = (wr_byte_in_tcm_word == 0);
+`endif
 `elsif FABRIC64
+`ifdef NM32
    Bool wr_addr_aligned = (wr_byte_in_tcm_word == 0);
+   Bool wr_upper_word = (rg_byte_addr [bits_per_byte_in_tcm_word] == 1'b1);
+`else
+   Bool wr_addr_aligned = (wr_byte_in_tcm_word == 0);
+`endif
 `endif
 
    // Invalid write address alignment: send error response
@@ -226,7 +267,7 @@ module mkTCM_DMA_AXI4_Adapter #(
    endrule
 
    // Legal, well-formed write requests
-   rule rl_wr_req (
+   rule rl_dma_wr_req (
          (rg_state == STATE_READY)
       && (wr_addr_valid)
       && (wr_addr_aligned));
@@ -237,19 +278,43 @@ module mkTCM_DMA_AXI4_Adapter #(
       // Strobe generation
       Bit #(Bytes_per_TCM_Word) strb = extend(slave_xactor.o_wr_data.first.wstrb);
 `ifdef FABRIC32
+`ifndef NM32
       strb = wr_lower_word ? strb : (strb << 4);
+`endif
+`endif
+
+`ifdef FABRIC64
+`ifdef NM32
+      // WARN: strb generation will NOT work if it straddles word boundary
+`endif
 `endif
 
       // Write data generation
       TCM_Word tcm_wdata = ?;
 `ifdef FABRIC32
-      tcm_wdata = {wrd.wdata, wrd.wdata};
-`elsif FABRIC64
+`ifdef NM32
       tcm_wdata = wrd.wdata;
+`else
+      tcm_wdata = {wrd.wdata, wrd.wdata};
+`endif
+`elsif FABRIC64
+`ifdef NM32
+      tcm_wdata = wr_upper_word ? pack (wrd.wdata[63:32])
+                                : pack (wrd.wdata[31:0]);
+`else
+      tcm_wdata = wrd.wdata;
+`endif
+`endif
+
+      // Write address generation
+`ifdef FABRIC64
+`ifdef NM32
+      if (wr_upper_word) wr_ram_word_addr = wr_ram_word_addr + 1;
+`endif
 `endif
 
       // Write word to ram
-      ram.put (strb, truncate(fv_Fabric_Addr_to_Addr (wr_ram_word_addr)), tcm_wdata);
+      ram.put (strb, wr_ram_word_addr, tcm_wdata);
 
       // Send response
       let wrr = AXI4_Wr_Resp {
@@ -259,9 +324,12 @@ module mkTCM_DMA_AXI4_Adapter #(
       slave_xactor.i_wr_resp.enq (wrr);
 
       if (verbosity > 1) begin
-         $display ("%0d: %m.rl_wr_req", cur_cycle);
+         $display ("%0d: %m.rl_dma_wr_req", cur_cycle);
          $display ("    ", fshow (wra));
          $display ("    ", fshow (wrd));
+         $display ("    (ram_addr : %0h", wr_ram_word_addr);
+         $display ("    (ram_data : %016h", tcm_wdata);
+         $display ("    (ram_strb : %08b", strb);
       end
    endrule
 

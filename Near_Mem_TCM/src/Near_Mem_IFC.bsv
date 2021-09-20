@@ -47,10 +47,11 @@ import AHBL_Types       :: *;
 import AHBL_Defs        :: *;
 `endif
 
-`ifdef INCLUDE_DMEM_SLAVE
-import AXI4_Lite_Types  :: *;
+`ifdef NM32
+`ifdef RV64
+(* doc ="ERROR: NM32-RV64 is not a supported combination.*)
 `endif
-
+`endif
 // ================================================================
 
 interface Near_Mem_IFC;
@@ -174,7 +175,11 @@ interface DMem_IFC;
                        , Bit #(7) amo_funct7
 `endif
                        , WordXL addr
+`ifdef NM32
+                       , Bit #(32) store_value
+`else
                        , Bit #(64) store_value
+`endif
 `ifdef ISA_PRIV_S
                        // The following  args for VM
                        , Priv_Mode  priv
@@ -186,8 +191,13 @@ interface DMem_IFC;
 
    // CPU side: DMem response
    (* always_ready *)  method Bool       valid;
+`ifdef NM32
+   (* always_ready *)  method Bit #(32)  word32;      // Load-value
+   (* always_ready *)  method Bit #(32)  st_amo_val;  // Store-value: ST, SC, AMO
+`else
    (* always_ready *)  method Bit #(64)  word64;      // Load-value
-   (* always_ready *)  method Bit #(64)  st_amo_val;  // Final store-value for ST, SC, AMO
+   (* always_ready *)  method Bit #(64)  st_amo_val;  // Store-value: ST, SC, AMO
+`endif
    (* always_ready *)  method Bool       exc;
    (* always_ready *)  method Exc_Code   exc_code;
 endinterface
@@ -229,59 +239,83 @@ endinterface;
 //  - a load-word (loaded from cache/mem)
 // result:
 //  - word with correct byte(s) shifted into LSBs and properly extended
-
-function Bit #(64) fn_extract_and_extend_bytes (Bit #(3) f3, WordXL byte_addr, Bit #(64) word64);
+`ifdef NM32
+function Bit #(32) fn_extract_and_extend_bytes (
+   Bit #(3) f3, WordXL byte_addr, Bit #(32) mem_word);
+   Bit #(32) result    = 0;
+   Bit #(2)  addr_lsbs = byte_addr [1:0];
+`else
+function Bit #(64) fn_extract_and_extend_bytes (
+   Bit #(3) f3, WordXL byte_addr, Bit #(64) mem_word);
    Bit #(64) result    = 0;
    Bit #(3)  addr_lsbs = byte_addr [2:0];
+`endif
 
    case (f3)
       f3_LB: case (addr_lsbs)
-                'h0: result = signExtend (word64 [ 7: 0]);
-                'h1: result = signExtend (word64 [15: 8]);
-                'h2: result = signExtend (word64 [23:16]);
-                'h3: result = signExtend (word64 [31:24]);
-                'h4: result = signExtend (word64 [39:32]);
-                'h5: result = signExtend (word64 [47:40]);
-                'h6: result = signExtend (word64 [55:48]);
-                'h7: result = signExtend (word64 [63:56]);
+                'h0: result = signExtend (mem_word [ 7: 0]);
+                'h1: result = signExtend (mem_word [15: 8]);
+                'h2: result = signExtend (mem_word [23:16]);
+                'h3: result = signExtend (mem_word [31:24]);
+`ifndef NM32
+                'h4: result = signExtend (mem_word [39:32]);
+                'h5: result = signExtend (mem_word [47:40]);
+                'h6: result = signExtend (mem_word [55:48]);
+                'h7: result = signExtend (mem_word [63:56]);
+`endif
              endcase
       f3_LBU: case (addr_lsbs)
-                'h0: result = zeroExtend (word64 [ 7: 0]);
-                'h1: result = zeroExtend (word64 [15: 8]);
-                'h2: result = zeroExtend (word64 [23:16]);
-                'h3: result = zeroExtend (word64 [31:24]);
-                'h4: result = zeroExtend (word64 [39:32]);
-                'h5: result = zeroExtend (word64 [47:40]);
-                'h6: result = zeroExtend (word64 [55:48]);
-                'h7: result = zeroExtend (word64 [63:56]);
+                'h0: result = zeroExtend (mem_word [ 7: 0]);
+                'h1: result = zeroExtend (mem_word [15: 8]);
+                'h2: result = zeroExtend (mem_word [23:16]);
+                'h3: result = zeroExtend (mem_word [31:24]);
+`ifndef NM32
+                'h4: result = zeroExtend (mem_word [39:32]);
+                'h5: result = zeroExtend (mem_word [47:40]);
+                'h6: result = zeroExtend (mem_word [55:48]);
+                'h7: result = zeroExtend (mem_word [63:56]);
+`endif
              endcase
 
       f3_LH: case (addr_lsbs)
-                'h0: result = signExtend (word64 [15: 0]);
-                'h2: result = signExtend (word64 [31:16]);
-                'h4: result = signExtend (word64 [47:32]);
-                'h6: result = signExtend (word64 [63:48]);
+                'h0: result = signExtend (mem_word [15: 0]);
+                'h2: result = signExtend (mem_word [31:16]);
+`ifndef NM32
+                'h4: result = signExtend (mem_word [47:32]);
+                'h6: result = signExtend (mem_word [63:48]);
+`endif
              endcase
       f3_LHU: case (addr_lsbs)
-                'h0: result = zeroExtend (word64 [15: 0]);
-                'h2: result = zeroExtend (word64 [31:16]);
-                'h4: result = zeroExtend (word64 [47:32]);
-                'h6: result = zeroExtend (word64 [63:48]);
+                'h0: result = zeroExtend (mem_word [15: 0]);
+                'h2: result = zeroExtend (mem_word [31:16]);
+`ifndef NM32
+                'h4: result = zeroExtend (mem_word [47:32]);
+                'h6: result = zeroExtend (mem_word [63:48]);
+`endif
              endcase
 
       f3_LW: case (addr_lsbs)
-                'h0: result = signExtend (word64 [31: 0]);
-                'h4: result = signExtend (word64 [63:32]);
+                'h0: result = signExtend (mem_word [31: 0]);
+`ifndef NM32
+                'h4: result = signExtend (mem_word [63:32]);
+`endif
              endcase
+`ifdef NM32
+      // If we get here, we are handling f3 cases which require
+      // special support outside the NM32 near-mem
+      default: result = mem_word;
+   endcase
+`else
       f3_LWU: case (addr_lsbs)
-                'h0: result = zeroExtend (word64 [31: 0]);
-                'h4: result = zeroExtend (word64 [63:32]);
+                'h0: result = zeroExtend (mem_word [31: 0]);
+                'h4: result = zeroExtend (mem_word [63:32]);
              endcase
 
       f3_LD: case (addr_lsbs)
-                'h0: result = word64;
+                'h0: result = mem_word;
              endcase
    endcase
+`endif
    return result;
 endfunction
 
@@ -298,7 +332,11 @@ endfunction
 
 function Tuple2 #(Bit #(Bytes_per_TCM_Word), // byte-enable
                   TCM_Word)                  // adjusted word
+`ifdef NM32
+         fn_byte_adjust_write (Bit #(3) f3, Addr byte_addr, Bit#(32) word);
+`else
          fn_byte_adjust_write (Bit #(3) f3, Addr byte_addr, Bit#(64) word);
+`endif
 
    Bit #(Bytes_per_TCM_Word) byte_en  = 0;   // If misaligned or illegal
    TCM_Word out_word = ?;
@@ -312,21 +350,31 @@ function Tuple2 #(Bit #(Bytes_per_TCM_Word), // byte-enable
          'h1: begin out_word [15: 8] = word [7:0]; byte_en = 'h02; end
          'h2: begin out_word [23:16] = word [7:0]; byte_en = 'h04; end
          'h3: begin out_word [31:24] = word [7:0]; byte_en = 'h08; end
+`ifndef NM32
          'h4: begin out_word [39:32] = word [7:0]; byte_en = 'h10; end
          'h5: begin out_word [47:40] = word [7:0]; byte_en = 'h20; end
          'h6: begin out_word [55:48] = word [7:0]; byte_en = 'h40; end
          'h7: begin out_word [63:56] = word [7:0]; byte_en = 'h80; end
+`endif
       endcase
 
       // Halfwords (16b)
       f3_LH: case (addr_lsbs)
          'h0: begin out_word [15: 0] = word [15:0]; byte_en = 'h03; end
          'h2: begin out_word [31:16] = word [15:0]; byte_en = 'h0C; end
+`ifndef NM32
          'h4: begin out_word [47:32] = word [15:0]; byte_en = 'h30; end
          'h6: begin out_word [63:48] = word [15:0]; byte_en = 'hC0; end
+`endif
       endcase
 
       // Words (32b)
+`ifdef NM32
+      f3_LW: begin out_word = word; byte_en = 'hf; end
+
+      // Doublewords (64b) -- Unsupported
+      f3_LD: begin out_word = word; byte_en = 'hf; end
+`else
       f3_LW: case (addr_lsbs)
          'h0: begin out_word [31: 0] = word [31:0]; byte_en = 'h0F; end
          'h4: begin out_word [63:32] = word [31:0]; byte_en = 'hF0; end
@@ -336,6 +384,7 @@ function Tuple2 #(Bit #(Bytes_per_TCM_Word), // byte-enable
       f3_LD: case (addr_lsbs)
          'h0: begin out_word = word; byte_en = '1; end
       endcase
+`endif
 
    endcase
    return tuple2 (byte_en, out_word);

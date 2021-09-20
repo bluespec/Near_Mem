@@ -28,7 +28,11 @@ deriving (Bits, Eq, FShow);
 typedef struct {CacheOp    op;
 		Bit #(3)   f3;
 		WordXL     va;
+`ifdef NM32
+		Bit #(32)  st_value;
+`else
 		Bit #(64)  st_value;
+`endif
 
 `ifdef ISA_A
 		Bit #(7)   amo_funct7;
@@ -200,8 +204,37 @@ function Exc_Code fv_exc_code_page_fault (MMU_Cache_Req req);
 endfunction
 
 // ================================================================
+// Cache-line states (also used in coherence protocol): MESI
+
+typedef enum { META_INVALID, META_SHARED, META_MODIFIED } Meta_State
+deriving (Bits, Eq);
+
+instance FShow #(Meta_State);
+   function Fmt fshow (Meta_State s);
+      Fmt fmt = $format ("Meta_State_UNKNOWN");
+      case (s)
+	 META_INVALID:   $format ("INVALID");
+	 META_SHARED:    $format ("SHARED");
+	 META_MODIFIED:  $format ("MODIFIED");
+      endcase
+   endfunction
+endinstance
+
+// ================================================================
 // Requests and responses between:
+//     L1_Cache <-> L2_Cache/MMU_Cache_AXI4_Adapter
 //     MMIO     <-> MMU_Cache_AXI4_Adapter
+
+// Line requests' addr represent a full line read/write.
+// For now: we line-align the address, expect write data to start from
+// offset 0, and return read-data from offset 0.
+// TODO: 'wrapping' bursts, starting with actual line-offset of 'addr'
+
+typedef struct {
+   Bool       is_read;
+   Bit #(64)  addr;
+   } Line_Req
+deriving (Bits, FShow);
 
 // Single requests are from MMIO for 1, 2, 4 or 8 bytes.
 typedef struct {
@@ -219,15 +252,29 @@ deriving (Bits, FShow);
 // Single Responses
 typedef struct {
    Bool       ok;
+`ifdef NM32
+   Bit #(32)  data;
+`else
    Bit #(64)  data;
+`endif
    } Read_Data
 deriving (Bits, FShow);
 
-// Write-data is just Bit #(64) data; no need for a new type decl
+// Write-data is just Bit #(64) or Bit #(32) data; no need for a
+// new type decl
 
 // ================================================================
 // Functions to/from lsb-justified data to fabric-lane-aligned data
-
+`ifdef NM32
+function Bit #(32) fv_size_code_to_mask (Bit #(2) size_code);
+   Bit #(32) mask = case (size_code)
+		       2'b00: 'h_0000_00FF;     // Byte
+		       2'b01: 'h_0000_FFFF;     // HWord
+		       2'b10: 'h_FFFF_FFFF;     // Word
+		       default: 'h_FFFF_FFFF;   // DWord: not supported
+		    endcase;
+   return mask;
+`else
 function Bit #(64) fv_size_code_to_mask (Bit #(2) size_code);
    Bit #(64) mask = case (size_code)
 		       2'b00: 'h_0000_0000_0000_00FF;
@@ -236,22 +283,48 @@ function Bit #(64) fv_size_code_to_mask (Bit #(2) size_code);
 		       2'b11: 'h_FFFF_FFFF_FFFF_FFFF;
 		    endcase;
    return mask;
+`endif
 endfunction
 
+`ifdef NM32
+function Bit #(32) fv_to_byte_lanes (Bit #(64) addr, Bit #(2) size_code, Bit #(32) data);
+   Bit #(32) data1 = (data & fv_size_code_to_mask (size_code));
+`else
 function Bit #(64) fv_to_byte_lanes (Bit #(64) addr, Bit #(2) size_code, Bit #(64) data);
    Bit #(64) data1 = (data & fv_size_code_to_mask (size_code));
+`endif
    return data1;
 endfunction
 
+`ifdef NM32
+function Bit #(32) fv_from_byte_lanes (Bit #(64)  addr,
+				       Bit #(2)   size_code,
+				       Bit #(32)  data);
+   // Align incoming data to LSB
+   Bit #(5)  shamt = { addr [1:0], 3'b0 };
+   Bit #(32) data1 = (data >> shamt);
+`else
 function Bit #(64) fv_from_byte_lanes (Bit #(64)  addr,
 				       Bit #(2)   size_code,
 				       Bit #(64)  data);
+   // Align incoming data to LSB
    Bit #(6)  shamt = { addr [2:0], 3'b0 };
    Bit #(64) data1 = (data >> shamt);
-
+`endif
    return (data1 & fv_size_code_to_mask (size_code));
 endfunction
 
+`ifdef NM32
+function Bit #(32) fv_extend (Bit #(3) f3, Bit #(32) data);
+   Bit #(32) mask     = fv_size_code_to_mask (f3 [1:0]);
+   Bit #(1)  sign_bit = case (f3 [1:0])
+			   2'b00: data  [7];
+			   2'b01: data [15];
+			   2'b10: data [31];
+			   default: data [31]; // DWord not supported
+			endcase;
+   Bit #(32) result;
+`else
 function Bit #(64) fv_extend (Bit #(3) f3, Bit #(64) data);
    Bit #(64) mask     = fv_size_code_to_mask (f3 [1:0]);
    Bit #(1)  sign_bit = case (f3 [1:0])
@@ -261,6 +334,7 @@ function Bit #(64) fv_extend (Bit #(3) f3, Bit #(64) data);
 			   2'b11: data [63];
 			endcase;
    Bit #(64) result;
+`endif
    if ((f3 [2] == 1'b0) && (sign_bit == 1'b1))
       result = data | (~ mask);    // sign extend
    else
@@ -271,13 +345,23 @@ endfunction
 
 // ================================================================
 // ALU for AMO ops.
-// Args: ld_val (64b from mem) and st_val (64b from CPU reg Rs2)
-// Result: (final_ld_val, final_st_val)
+// Args: ld_val (64b (or 32b) from mem) and st_val (64b (or 32b)
+// from CPU reg Rs2). Result: (final_ld_val, final_st_val)
 //
 // All args and results are in LSBs (i.e., not lane-aligned).
 // final_ld_val includes sign-extension (if necessary).
 // final_st_val is output of the binary AMO op
-
+`ifdef NM32
+function Tuple2 #(Bit #(32),
+		  Bit #(32)) fv_amo_op ( Bit #(5)   funct5,    // encodes the AMO op
+					Bit #(32)  ld_val,    // 32b value loaded from mem
+					Bit #(32)  st_val);   // 32b value from CPU reg Rs2
+   Bit #(32) w1     = ld_val;
+   Bit #(32) w2     = st_val;
+   Int #(32) i1     = unpack (w1);    // Signed, for signed ops
+   Int #(32) i2     = unpack (w2);    // Signed, for signed ops
+   Bit #(32) final_st_val = ?;
+`else
 function Tuple2 #(Bit #(64),
 		  Bit #(64)) fv_amo_op (Bit #(2)   size_code, // 2'b10=W, 11=D
 					Bit #(5)   funct5,    // encodes the AMO op
@@ -287,6 +371,8 @@ function Tuple2 #(Bit #(64),
    Bit #(64) w2     = st_val;
    Int #(64) i1     = unpack (w1);    // Signed, for signed ops
    Int #(64) i2     = unpack (w2);    // Signed, for signed ops
+
+   // Consider 31:0 for word AMO
    if (size_code == 2'b10) begin
       w1 = zeroExtend (w1 [31:0]);
       w2 = zeroExtend (w2 [31:0]);
@@ -294,6 +380,7 @@ function Tuple2 #(Bit #(64),
       i2 = unpack (signExtend (w2 [31:0]));
    end
    Bit #(64) final_st_val = ?;
+`endif
    case (funct5)
       f5_AMO_SWAP: final_st_val = w2;
       f5_AMO_ADD:  final_st_val = pack (i1 + i2);
@@ -306,11 +393,29 @@ function Tuple2 #(Bit #(64),
       f5_AMO_MAX:  final_st_val = ((i1 > i2) ? w1 : w2);
    endcase
 
+`ifdef NM32
+   return tuple2 (pack (i1), final_st_val);
+`else
+   // Consider 31:0 for word AMO
    if (size_code == 2'b10)
       final_st_val = zeroExtend (final_st_val [31:0]);
 
    return tuple2 (truncate (pack (i1)), final_st_val);
+`endif
 endfunction: fv_amo_op
+
+// ================================================================
+`ifdef Near_Mem_TCM
+// TCM internal state
+typedef enum {
+     MEM_IDLE                       // Reset done, ready for request
+   , MEM_TCM_RSP                    // Response from TCM
+   , MEM_MMIO_RSP                   // Response from MMIO
+`ifdef ISA_A
+   , MEM_AMO_RSP                    // Response from TCM for AMO ops
+`endif
+} Mem_State deriving (Bits, Eq, FShow);
+`endif
 
 // ================================================================
 

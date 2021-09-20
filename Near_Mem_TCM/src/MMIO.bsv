@@ -46,7 +46,11 @@ endinterface
 interface DMMIO_IFC;
    method Action start;
 
+`ifdef NM32
+   method Tuple3 #(Bool, Bit #(32), Bit #(32)) result;
+`else
    method Tuple3 #(Bool, Bit #(64), Bit #(64)) result;
+`endif
 endinterface
 
 // ================================================================
@@ -113,7 +117,8 @@ module mkIMMIO #(
 
       // Successful read
       else begin
-	 Bit #(64) ld_val_bits = fv_from_byte_lanes (zeroExtend (req_pa), req.f3 [1:0], read_data.data);
+	 let ld_val_bits = fv_from_byte_lanes (
+            zeroExtend (req_pa), req.f3 [1:0], read_data.data);
 
 	 // Loads and LR
 	 rg_ld_val <= truncate (ld_val_bits);
@@ -153,7 +158,11 @@ module mkDMMIO #(
    , FIFOF #(Single_Req) f_nmio_reqs
    , Bool                is_external_req
 `endif
+`ifdef NM32
+   , FIFOF #(Bit #(32))  f_write_data
+`else
    , FIFOF #(Bit #(64))  f_write_data
+`endif
    , FIFOF #(Read_Data)  f_read_data
    , Bit#(2) verbosity
 ) (DMMIO_IFC);
@@ -165,8 +174,16 @@ module mkDMMIO #(
 
    // Results
    Reg #(Bool)          rg_err          <- mkReg (False);
+`ifdef NM32
+   Reg #(Bit #(32))     rg_ld_val       <- mkReg (0);
+`else
    Reg #(Bit #(64))     rg_ld_val       <- mkReg (0);
+`endif
+`ifdef NM32
+   Reg #(Bit #(32))     rg_final_st_val <- mkReg (0);
+`else
    Reg #(Bit #(64))     rg_final_st_val <- mkReg (0);
+`endif
 
    // ----------------
    // Memory interface
@@ -175,12 +192,19 @@ module mkDMMIO #(
    // ----------------------------------------------------------------
    // Help-function for single-writes to mem
 
+`ifdef NM32
+   function Action fa_mem_single_write (Bit #(32) st_value);
+      action
+	 // Lane-align the outgoing data
+	 Bit #(5)  shamt_bits = { req_pa [1:0], 3'b000 };
+	 Bit #(32) data       = (st_value << shamt_bits);
+`else
    function Action fa_mem_single_write (Bit #(64) st_value);
       action
 	 // Lane-align the outgoing data
 	 Bit #(6)  shamt_bits = { req_pa [2:0], 3'b000 };
 	 Bit #(64) data       = (st_value << shamt_bits);
-
+`endif
 	 let r   = Single_Req {is_read:   False,
 			       addr:      zeroExtend (req_pa),
 			       size_code: req.f3 [1:0]};
@@ -228,7 +252,8 @@ module mkDMMIO #(
       let read_data <- pop (f_read_data);
 
       if (verbosity >= 1) begin
-	 $display ("%0d: %m.rl_read_rsp: vaddr %0h  paddr %0h", cur_cycle, req.va, req_pa);
+	 $display ("%0d: %m.rl_read_rsp: vaddr %0h  paddr %0h"
+                 , cur_cycle, req.va, req_pa);
 	 $display ("    ", fshow (read_data));
       end
 
@@ -243,7 +268,7 @@ module mkDMMIO #(
 
       // Successful read
       else begin
-	 Bit #(64) ld_val_bits = fv_from_byte_lanes (
+	 let  ld_val_bits = fv_from_byte_lanes (
             zeroExtend (req_pa), req.f3 [1:0], read_data.data);
 
 	 // Loads and LR
@@ -256,11 +281,14 @@ module mkDMMIO #(
 `ifdef ISA_A
 	 // AMO read-modify-write
 	 else begin
-	    match {.final_ld_val,
-		   .final_st_val} = fv_amo_op (req.f3 [1:0],
-					       req.amo_funct7 [6:2],
-					       ld_val_bits,
-					       req.st_value);
+            match {.final_ld_val, .final_st_val} = fv_amo_op (
+`ifndef NM32
+               req.f3 [1:0],
+`endif
+               req.amo_funct7 [6:2],
+               ld_val_bits,
+               req.st_value);
+
 	    // Write back final_st_val
 	    fa_mem_single_write (final_st_val);
 	    if (verbosity >= 1) begin
@@ -284,15 +312,16 @@ module mkDMMIO #(
          (rg_mmio_state == MMIO_START)
       && (req.op == CACHE_ST));
       if (verbosity >= 2)
-	 $display ("%0d: %m.rl_write_req; f3 %0h  vaddr %0h  paddr %0h  word64 %0h",
+	 $display ("%0d: %m.rl_write_req; f3 %0h  vaddr %0h  paddr %0h  word %0h",
 		   cur_cycle, req.f3, req.va, req_pa, req.st_value);
 
-      Bit #(64) data = fv_to_byte_lanes (zeroExtend (req_pa), req.f3 [1:0], req.st_value);
+      let data = fv_to_byte_lanes (
+         zeroExtend (req_pa), req.f3 [1:0], req.st_value);
 
       fa_mem_single_write (data);
 
-      rg_final_st_val <= req.st_value;
-      rg_mmio_state    <= MMIO_IDLE;
+      rg_final_st_val   <= req.st_value;
+      rg_mmio_state     <= MMIO_IDLE;
 
       if (verbosity >= 3)
 	 $display ("    goto MMIO_DONE");

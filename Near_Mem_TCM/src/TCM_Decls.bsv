@@ -6,7 +6,11 @@ import Vector        :: *;
 import ISA_Decls     :: *;
 
 // TCM related type definitions -- common to I and D TCMs
+`ifdef NM32
+typedef 32 TCM_XLEN;
+`else
 typedef 64 TCM_XLEN;
+`endif
 typedef Bit #(TCM_XLEN)                   TCM_Word;
 typedef TDiv #(TCM_XLEN, Bits_per_Byte)   Bytes_per_TCM_Word;
 typedef TLog #(Bytes_per_TCM_Word)        Bits_per_Byte_in_TCM_Word;
@@ -37,8 +41,8 @@ typedef TAdd# (TLog# (KB_PER_DTCM), TLog #(1024)) DTCM_Addr_LSB;
 Integer dtcm_addr_lsb = valueOf (DTCM_Addr_LSB);
 
 // Indices into the ITCM and DTCM (TCM word aligned)
-typedef Bit #(TAdd #(TLog #(KB_PER_ITCM), 7))    ITCM_INDEX;  // KB * 1024 / bytes_per_tcm_word
-typedef Bit #(TAdd #(TLog #(KB_PER_DTCM), 7))    DTCM_INDEX;  // KB * 1024 / bytes_per_tcm_word
+typedef Bit #(TSub #(ITCM_Addr_LSB, Bits_per_Byte_in_TCM_Word)) ITCM_INDEX;  // KB * 1024 / bytes_per_tcm_word
+typedef Bit #(TSub #(DTCM_Addr_LSB, Bits_per_Byte_in_TCM_Word)) DTCM_INDEX;  // KB * 1024 / bytes_per_tcm_word
 
 // size of the BRAM in TCM_Word(s). the addition of the extra term is to prevent rounding down
 // in case bytes_per_word is not a power of two.
