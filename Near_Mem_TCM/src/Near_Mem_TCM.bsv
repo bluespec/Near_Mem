@@ -35,7 +35,7 @@
 //
 // The macro NM32 defines a near-mem with a 32-bit data path all
 // the way from the CPU to the fabric. In the case of the TCMs,
-// their word-width is sized to match the data path width. 
+// their word-width is sized to match the data path width.
 
 // ----------------
 // NOTE: "tohost"
@@ -137,8 +137,8 @@ module mkNear_Mem (Near_Mem_IFC);
    //            1: Requests and responses
    //            2: rule firings
    //            3: + detail
-   Bit #(2) i_verbosity = 2;
-   Bit #(2) d_verbosity = 2;
+   Bit #(2) i_verbosity = 0;
+   Bit #(2) d_verbosity = 0;
 
    FIFOF #(Token) f_reset_rsps <- mkFIFOF1;
 
