@@ -25,8 +25,8 @@ function  Byte_in_TCM_Word fn_addr_to_byte_in_tcm_word (Addr a);
    return a [addr_hi_byte_in_tcm_word : addr_lo_byte_in_tcm_word ];
 endfunction
 
-typedef 64 KB_PER_ITCM;
-typedef 32 KB_PER_DTCM;
+typedef 128 KB_PER_ITCM;
+typedef 128 KB_PER_DTCM;
 
 // TCM Sizing - separate sizing for I and D TCMs
 Integer kB_per_ITCM = valueOf (KB_PER_ITCM);     // 64KB
