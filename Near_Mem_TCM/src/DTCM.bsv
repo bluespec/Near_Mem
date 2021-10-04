@@ -128,7 +128,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
    Reg #(Bool)                dw_valid          <- mkDWire (False);
    Reg #(Bool)                dw_exc            <- mkDWire (False);
    Reg #(Exc_Code)            dw_exc_code       <- mkDWire (?);
-   
+
    Reg #(TCM_Word)            dw_word           <- mkDWire (?);
    Reg #(TCM_Word)            dw_final_st_val   <- mkDWire (?);
 
@@ -518,10 +518,10 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
       let is_mem_req = !soc_map.m_is_nmio_addr (fabric_addr);
 `endif
 
-      // Check if addr belongs to the ITCM 
+      // Check if addr belongs to the ITCM
       let is_itcm_req = soc_map.m_is_itcm_addr (fabric_addr);
 
-      // Check if addr belongs to the DTCM 
+      // Check if addr belongs to the DTCM
       let is_dtcm_req = soc_map.m_is_dtcm_addr (fabric_addr);
 
       // Legality check -- aligned address, and address should not
@@ -687,7 +687,9 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
 `else
       rg_tohost_addr  <= tohost_addr;
 `endif
-      if (verbosity > 0)
+      if (verbosity > 0 &&
+	  (rg_watch_tohost != watch_tohost ||
+	   rg_tohost_addr != truncate(tohost_addr)))
 	 $display ("%0d: %m.set_watch_tohost: watch %0d, addr %08h",
 		   cur_cycle, watch_tohost, tohost_addr);
    endmethod
