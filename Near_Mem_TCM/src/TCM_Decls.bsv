@@ -27,10 +27,10 @@ endfunction
 
 // Default values:
 `ifndef ITCMKB
-`define ITCMKB 64
+`define ITCMKB 128
 `endif
 `ifndef DTCMKB
-`define DTCMKB 32
+`define DTCMKB 128
 `endif
 
 typedef `ITCMKB KB_PER_ITCM;
