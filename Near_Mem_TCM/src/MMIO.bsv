@@ -70,10 +70,10 @@ module mkIMMIO #(
    , FIFOF #(Read_Data)  f_read_data
    , Bit#(2) verbosity
 ) (IMMIO_IFC);
-   
+
    Reg #(MMIO_State) rg_mmio_state <- mkReg (MMIO_IDLE);
 
-   // Non-VM MMIO: PA = VA 
+   // Non-VM MMIO: PA = VA
    let req_pa  = fn_WordXL_to_PA (req.pc);
 
    // Results
@@ -156,7 +156,7 @@ module mkDMMIO #(
    , FIFOF #(Single_Req) f_mem_reqs
 `ifdef DUAL_FABRIC
    , FIFOF #(Single_Req) f_nmio_reqs
-   , Bool                is_external_req
+   , FIFOF #(Bool)       f_is_mem_req
 `endif
 `ifdef NM32
    , FIFOF #(Bit #(32))  f_write_data
@@ -166,10 +166,10 @@ module mkDMMIO #(
    , FIFOF #(Read_Data)  f_read_data
    , Bit#(2) verbosity
 ) (DMMIO_IFC);
-   
+
    Reg #(MMIO_State) rg_mmio_state <- mkReg (MMIO_IDLE);
 
-   // Non-VM MMIO: PA = VA 
+   // Non-VM MMIO: PA = VA
    let req_pa  = fn_WordXL_to_PA (req.va);
 
    // Results
@@ -209,7 +209,8 @@ module mkDMMIO #(
 			       addr:      zeroExtend (req_pa),
 			       size_code: req.f3 [1:0]};
 `ifdef DUAL_FABRIC
-      let request_fifo = is_external_req ? f_mem_reqs : f_nmio_reqs;
+      let request_fifo = f_is_mem_req.first ? f_mem_reqs : f_nmio_reqs;
+      f_is_mem_req.deq;
 `else
       let request_fifo = f_mem_reqs;
 `endif
@@ -236,7 +237,8 @@ module mkDMMIO #(
 			    addr:      zeroExtend (req_pa),
 			    size_code: req.f3 [1:0]};
 `ifdef DUAL_FABRIC
-      let request_fifo = is_external_req ? f_mem_reqs : f_nmio_reqs;
+      let request_fifo = f_is_mem_req.first ? f_mem_reqs : f_nmio_reqs;
+      f_is_mem_req.deq;
 `else
       let request_fifo = f_mem_reqs;
 `endif
