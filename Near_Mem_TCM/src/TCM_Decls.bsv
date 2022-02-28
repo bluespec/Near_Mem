@@ -32,6 +32,13 @@ endfunction
 `ifndef DTCMKB
 `define DTCMKB 32
 `endif
+`ifdef HEXFILEPREFIX
+String itcmname =  `HEXFILEPREFIX + "itcm.hex";
+String dtcmname =  `HEXFILEPREFIX + "dtcm.hex";
+`else
+String itcmname =  "/tmp/e342zni.hex";
+String dtcmname =  "/tmp/e342znd.hex";
+`endif
 
 typedef `ITCMKB KB_PER_ITCM;
 typedef `DTCMKB KB_PER_DTCM;

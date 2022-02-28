@@ -200,7 +200,7 @@ module mkDTCM #(Bit #(2) verbosity) (DTCM_IFC);
                      , TCM_Word
                      , Bytes_per_TCM_Word) dtcm <- mkBRAMCore2BELoad (n_words_DBRAM
                                                                     , config_output_register_BRAM
-                                                                    , "/tmp/e342znd.hex"
+                                                                    , dtcmname
                                                                     , load_file_is_binary_BRAM);
 `endif
 

@@ -5,7 +5,7 @@
 // introduction in Near_Mem_TCM for details.
 //
 // ----------------
-  
+
 package ITCM;
 
 // ================================================================
@@ -126,7 +126,7 @@ module mkITCM #(Bit #(2) verbosity) (ITCM_IFC);
                      , TCM_Word
                      , Bytes_per_TCM_Word) itcm <- mkBRAMCore2BELoad (n_words_IBRAM
                                                                     , config_output_register_BRAM
-                                                                    , "/tmp/e342zni.hex"
+                                                                    , itcmname
                                                                     , load_file_is_binary_BRAM);
 `endif
 
